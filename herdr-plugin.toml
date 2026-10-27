@@ -1,0 +1,18 @@
+id = "redpen"
+name = "Redpen"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+description = "Send an annotated selection from any pane to an agent."
+platforms = ["linux"]
+
+[[panes]]
+id = "compose"
+title = "Redpen"
+placement = "popup"
+command = ["bash", "-c", 'exec bash "${HERDR_PLUGIN_ROOT:?}/run.sh" compose']
+
+[[actions]]
+id = "open"
+title = "赤を入れる"
+contexts = ["pane", "selection"]
+command = ["bash", "run.sh", "open"]
