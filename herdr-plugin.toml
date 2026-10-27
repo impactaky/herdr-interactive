@@ -7,8 +7,8 @@ platforms = ["linux"]
 
 [[panes]]
 id = "compose"
-title = "Redpen"
-placement = "popup"
+title = "Redpen · Enter 次へ / V 範囲 / j,k ↑↓ / PgUp,Dn / Esc"
+placement = "overlay"
 command = ["bash", "-c", 'exec bash "${HERDR_PLUGIN_ROOT:?}/run.sh" compose']
 
 [[actions]]

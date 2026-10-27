@@ -2,33 +2,38 @@
 
 - 誰が: 開発者
 - 目的: agent・shell・ログ・TUI の画面の文字を指し、作業の流れを切らず agent にひとこと伝える
-- 始まり: 開発者が pane の文字を選び、赤を入れるキーまたは選択メニューを使う
+- 始まり: 開発者が気になる pane で赤を入れるキーを押す
 
 ## 基本シナリオ
 
-1. 開発者が気になる文字を選び、`prefix+alt+r` または「赤を入れる」で起動する。
-2. システムが popup に引用と送り先を表示する。元 pane に agent がいればその agent を選ぶ。
-3. 開発者がひとこと入力し、Enter を押す。
-4. システムが引用付きの【赤】を送り、JSONL に記録する。
-5. popup が閉じて元の pane に戻り、開発者は作業を続ける。
+1. 開発者が気になる pane を見たい位置まで scroll し、`prefix+alt+r` を押す。
+2. システムが、その pane と同じ位置・大きさ・色・scroll 位置の静止画面を重ねる。他の pane の場所は空白にする。
+3. 開発者が静止画面の中でクリックして1行、またはドラッグして複数行を選ぶ。j/k・矢印と V でも範囲を選べる。選択は左端の印（左端の枠が描けない場合は反転）で分かり、文字の色指定は保たれる。
+4. Enter でひとこと入力に進み、ひとことを書いて Enter を押す。
+5. システムが選んだ行を ANSI のない引用にした【赤】を送り、JSONL に記録する。
+6. overlay が閉じて元の pane に戻り、開発者は作業を続ける。
 
 ## extension
 
 - **shell やログの pane**: 同じ tab の Claude Code / Codex から状態変化が最も新しいものを選ぶ。送り元の pane id と cwd を文に付ける。
-- **送り先を変える**: 手順 3 で Tab を押し、同じ tab の agent を順に選ぶ。
-- **選択がない・渡らない**: 手順 2 で元 pane の visible 画面を引用する。
+- **画面外の行を選ぶ**: PageUp/PageDown、上端で k/↑、マウスホイールで、起動時に取得した scrollback を遡る。元 pane の scroll 位置は変更しない。
+- **選ばず Enter**: 現在のカーソル行だけを引用する。初期カーソルは起動時の最上段。
+- **Herdr から選択が届いた**: その selected_text を優先し、静止画面を飛ばしてひとこと入力へ進む（将来の修正後も対応）。
+- **送り先を変える**: ひとこと入力画面で Tab を押し、同じ tab の agent を順に選ぶ。
 - **引用が長い**: 先頭 4000 文字に切り詰め、本文と記録にその旨を残す。
-- **agent がいない**: popup が「記録だけ残します」と表示する。Enter は送信せず記録する。
+- **agent がいない**: 「記録だけ残します」と表示する。Enter は送信せず記録する。
 - **改行したい**: Ctrl+J でひとことに改行する。Enter は送信する。
-- **取り消す**: Esc で送信・記録をせず閉じ、元 pane に戻る。
+- **取り消す**: 選択中も入力中も Esc で送信・記録をせず閉じ、元 pane に戻る。
 - **送信に失敗した・agent が交代した**: エラーを記録・表示する。到達を確認し、Esc で閉じる。自動再送しない。
 
 ## 制約と事後条件
 
-Redpen plugin の登録とキー設定が必要。選択保持には `[ui] copy_on_select = false` を設定する。送信した赤と送り先不在時の赤は私有の XDG state directory に残る。agent が作業中でも入力を送り、処理完了は待たない。画像と会話全体の添削は対象外。
+Redpen plugin の登録とキー設定が必要。config 本体は git 管理外の利用者設定で、[README の例](../../config/herdr/plugins/local/redpen/README.md)を手元の設定へ追加する。copy_on_select の変更や Ctrl+クリックは不要。送信した赤と送り先不在時の赤は私有の XDG state directory に残る。agent が作業中でも入力を送り、処理完了は待たない。
+
+元 process は止めず、表示だけを固定する。行単位で選択し、scrollback は host が起動時に返す範囲まで。画像と会話全体の添削は対象外。
 
 ## 検証
 
-[plugin README](../../config/herdr/plugins/local/redpen/README.md) に文面・保存形式・ADR・実機の範囲を記載する。host を使わない `test_redpen.py` は引用、送り先、記録、fallback、不在、入力とキャンセルを検査する。実機では選択 context を指定した Codex への送信、shell の visible fallback と送り元情報、元 pane への復帰、agent 不在時の記録、キー起動を確認した。
+[plugin README](../../config/herdr/plugins/local/redpen/README.md) に形式・ADR・実機の範囲を記載する。host を使わない test は ANSI の解析・描画、座標補正、マウスとキーボードの範囲選択、scrollback、引用、記録、送り先不在、キャンセルを検査する。
 
-マウス選択からキーへの selected_text 引継ぎと選択メニュー起動は未確認。一時 client の drag 後のキー起動は visible fallback となったため、基本シナリオ全体の検収は残る。
+実機の右側 pane で元画面と overlay の37行の座標・色の一致、22行 scroll の保持、擬似クリック・ドラッグ・キーボード選択、画面外の引用を確認した。ドラッグした3行と V・j で選んだ2行は、作業中 Codex に plain text の引用として届いた。Esc 前後で記録・scroll・focus の維持も確認した。Moshi の物理マウス操作は別途検収する。

@@ -1,6 +1,6 @@
 # Redpen
 
-任意の Herdr pane（Claude Code / Codex / shell / ログ / TUI）の画面の文字に、ひとこと添えた【赤】を agent に送る local plugin。Python 3 の標準ライブラリだけを使う。reviewr の git diff コメント、herdr-nvim のコードへの質問とは対象が異なる。
+Herdr の任意 pane（Claude Code / Codex / shell / ログ / TUI）に、その場の色付き静止画面を重ねて行を選び、ひとこと添えた【赤】を agent に送る local plugin。Python 3 の標準ライブラリだけを使う。reviewr の git diff コメント、herdr-nvim のコードへの質問とは対象が異なる。
 
 ## 登録と設定
 
@@ -10,28 +10,30 @@ Herdr 0.9.5、Linux で使う。
 herdr plugin link /absolute/path/to/shelffiles/config/herdr/plugins/local/redpen
 ```
 
-`config/herdr/config.toml` の設定を、普段使う config にマージする。開始 commit には config 本体がなかったため、この repository のファイルは追加する設定の抜粋。
+利用者の **git 管理外** の `config/herdr/config.toml` に以下のキーを追加する。この repository は config 本体を配布・上書きしない。
 
 ```toml
 [[keys.command]]
 key = "prefix+alt+r"
 type = "plugin_action"
 command = "redpen.open"
-description = "選択箇所に赤を入れる"
-
-[ui]
-copy_on_select = false
+description = "その場の画面に赤を入れる"
 ```
 
-既存の `[ui]` があればそこへ項目を追加し、節を重複させない。`copy_on_select` の既定値 true はマウス選択をコピーして解除するため、選択を保持したい場合は false が必要。prefix+r/e/f/u/space との衝突はない。キーは config 再読込で反映する。
+config を再読込する。既存の prefix+r/e/f/u/space/t と衝突しない。`copy_on_select` の変更は不要。Herdr 自身の選択や Ctrl+クリックに依存せず、plugin 内で選ぶ。
 
 ## 使い方
 
-1. 対象 pane の文字をマウスで選び、`prefix+alt+r`、または選択メニューの「赤を入れる」で起動する。
-2. popup に引用の冒頭と送り先が出る。ひとことを書き、Enter で送信・記録する。Ctrl+J は改行、Backspace は末尾削除、Tab は送り先切替。
-3. popup が閉じ、元の pane に戻る。Esc は送信も記録もせず閉じる。
+1. 気になる pane を必要な位置まで scroll し、`prefix+alt+r` を押す。
+2. **その pane と同じ位置・大きさ・scroll 位置の色付き静止画面**が現れる。tab 全体の overlay の中で、元 pane の場所だけに snapshot を描き、他の pane の場所は空白にする。元の process は動作を続けるが、選択中の snapshot は更新しない。
+3. クリックで1行、ドラッグで複数行を選ぶ。キーボードは j/k・↑↓ で行移動、V で範囲の開始・解除、PageUp/PageDown で1画面分移動する。上端で k/↑、またはマウスホイールでも、起動時に取得した scrollback を遡れる。左端の `▌` がカーソル行・範囲を示す。左端が overlay 自身の枠に隠れる pane では選択行を反転する。元の色指定は保持する。
+4. Enter でひとこと入力へ進む。何も選ばなければカーソル行だけを引用する。初期カーソルは起動時の最上段。
+5. ひとことを書き、Enter で送信・記録する。Ctrl+J は改行、Backspace は末尾削除、Tab は送り先切替。
+6. overlay が閉じ、元の pane に戻る。選択中・入力中とも Esc は送信も記録もせず閉じる。
 
-送り先は同じ tab の Claude Code / Codex のみ。元 pane に agent がいればそれを先頭にする。それ以外は `agent.list` の `state_change_seq` が大きい順（同値は pane id 順）。Herdr は focus 履歴を公開していないため、最近使った agent の代用として状態変化順を使う。popup を開いた時点の一覧で切り替える。送信前に agent の種類・会話・tab が一致することを再検査し、作業中でも idle を待たず送る。終了・会話交代時は開き直す。
+Herdr が将来 `HERDR_PLUGIN_CONTEXT_JSON.selected_text` を渡せるようになった場合は、それを優先し、静止画面の選択を飛ばしてひとこと入力へ進む。
+
+送り先は同じ tab の Claude Code / Codex のみ。元 pane に agent がいればそれを先頭にする。それ以外は `agent.list` の `state_change_seq` が大きい順（同値は pane id 順）。focus 履歴の代用として状態変化順を使う。送り先は入力画面を開いた時点の一覧で切り替える。送信前に agent の種類・会話・tab が一致することを再検査し、作業中でも idle を待たず送る。終了・会話交代時は開き直す。
 
 送り先がない場合は「なし — 記録だけ残します」と表示し、Enter で記録して閉じる。送信失敗時は記録し、エラーを表示する。到達が不明な失敗もあるので、自動再送せず、agent の画面を確認して Esc で閉じる。
 
@@ -46,7 +48,7 @@ copy_on_select = false
 送り元: pane=w1:p2 cwd=/example
 ```
 
-送り元が送り先と同じ pane なら最後の行は付けない。引用はすべての行（空行を含む）に `> ` を付ける。選択が渡らなければ popup を開く前の `pane.read` の visible 画面を使う。選択・visible とも先頭 4000 Unicode 文字までにし、超えたら本文にも切り詰めを示す。引用全文は記録から確認できる（上限内）。
+送り元が送り先と同じ pane なら最後の行は付けない。引用は snapshot から ANSI を除いた plain text。選択した行（空行を含む）すべてに `> ` を付ける。行末の画面の空白は省く。先頭 4000 Unicode 文字までにし、超えたら本文と記録に切り詰めを示す。
 
 ## 記録
 
@@ -60,7 +62,7 @@ copy_on_select = false
 | `source` | `pane_id`, `title`, `cwd`, `tab_id` |
 | `destination` | `pane_id`, `kind`（claude / codex）、送り先不在なら null |
 | `quote` | 上限 4000 文字の引用 |
-| `quote_origin` | selection / visible |
+| `quote_origin` | selection / frozen（旧版の visible も既存ログには残る） |
 | `quote_truncated`, `quote_original_length` | 切り詰めの有無、切り詰め前の文字数 |
 | `note` | 入力したひとこと（改行可） |
 | `delivery` | sent / not_sent / failed_or_unknown |
@@ -68,20 +70,32 @@ copy_on_select = false
 
 `sent` は Herdr が入力の送出を受け付けた状態で、agent の処理完了は待たない。送信直後に process が停止した場合などは記録が残らない可能性がある。内容に画面上の機密が含まれ得るため、このログを repository に入れない。
 
-## 調べた Herdr の挙動と検証範囲
+## 描画と Herdr API
 
-2026-10-27 のインストール済み `herdr --skill` / `--help` / `api schema --json`（protocol 22）と実機で確認。
+インストール済み `herdr --skill` / `--help` / `api schema --json`（protocol 22）と実機で確認した経路を使う。
 
-- Manifest の `placement = "popup"` は link 時に受理された。CLI `plugin pane open --placement` の候補には popup がないため、継承した `HERDR_SOCKET_PATH` に JSON Lines の `plugin.pane.open` を送る。width=80%、height=60%。`target_pane_id` は指定すると拒否されるので省略し、active pane に開く。背景 pane を指す起動は想定しない。
-- `HERDR_PLUGIN_CONTEXT_JSON` の `focused_pane_id` を送り元とし、`selected_text` があれば採用する。`plugin.action.invoke` に選択 context を明示した検証で、二行の引用が作業中の Codex に届いた。
-- 通常の CLI `plugin action invoke redpen.open` の context に選択は入らなかった。shell の visible fallback、同 tab の Codex への送信、pane id / cwd の添付、JSONL、元 shell への focus 復帰を実機確認した。
-- 普段の config は変更せず、一時検証 session で `prefix+alt+r` の popup 起動と agent 不在時の記録を確認した。
-- **マウス選択 → キーの selected_text 引継ぎ、および選択メニューからの起動は未確認。** 一時端末 client で drag 後のキー起動は visible fallback になった。選択を渡した API 検証と同一視しない。実際の利用 client での検収が必要。
-- alternate screen の TUI の visible 画面は取得できるが scrollback 全体は対象外。作業中の Codex に `agent read --lines` で履歴を要求すると拒否される場合があり、検証では visible を使った。
+- 元 pane の `pane.get` で scroll、`pane.layout` で tab area と pane rect を得る。`pane.read` の `source=visible, format=ansi, strip_ansi=false` で起動時の表示を取得する。scrollback があれば `source=recent` も ANSI で取得し、visible の前後に保持する。元 pane に `pane.scroll` を送らない。
+- `plugin.pane.open` を `placement=overlay` で開く。`target_pane_id` は overlay で拒否されるため指定しない。active pane からの起動を前提とする。
+- overlay は tab 全体の pane。実機では layout area 94×39 に対して端末は91×37だった（外枠2列・2行と scrollbar 1列）。この inset を補正して元 pane の **内容の画面座標**を一致させる。scrollbar 無効の横幅差2列も扱う。overlay の外枠は Herdr のもので、元 pane に相当する左端に選択印を描く。popup への切替は不要だった。
+- snapshot の SGR を保持し、色を変換せず再描画する。SGR 以外の escape（カーソル操作・OSC 等）は再実行しない。行の切り出しは CJK のセル幅・結合文字を考慮する。
+- plugin 自身が mouse reporting（1000/1002/1006）を要求し、Herdr から転送されたクリック・ドラッグ・wheel を受ける。選択は行単位で、元の terminal selection API への問い合わせは不要。
+- 大きな scrollback を環境変数に入れず、私有 state directory の0600の一時 snapshot JSONを渡す。overlay が読み込むと直ちに削除する。送信失敗・Esc でも全文を JSONL に保存しない。起動前に process が停止した場合は `snapshot-*.json` が残ることがある。
+
+## 実機検証（2026-10-27）
+
+元 checkout の config は編集せず、一時設定・専用検証 session と CLI action invoke を使った。
+
+- 右側 pane rect `(47,0,47,39)` に、ANSI 色付き120行を出して22行 scroll した。元 pane と overlay を `pane.read --format ansi` 相当の API で比較し、全37行の文字の座標と SGR が一致。表示は ROW_069〜ROW_105、元の scroll offset は22のまま。
+- 擬似 SGR mouse でクリックした ROW_070 は1行、ドラッグした ROW_093〜095は3行の plain text として記録された。
+- PageUp → V → j → j で起動時の画面外の ROW_032〜034を選び、記録できた。
+- 同じ tab の作業中 Codex へ、静止画面でドラッグした MOUSE_A/B/C の3行、V・j で選んだ A/B の2行が引用として届いた。JSONL は `quote_origin=frozen, delivery=sent`、ANSI なし。送り元 pane id/cwd も届き、focus は元 shell に戻った。
+- Esc 前後で記録件数は7行のまま、focus と scroll offset=22を維持。擬似入力は一時端末 client から行ったもので、macOS Moshi の物理マウス操作そのものの検収ではない。
 
 ## 制限
 
-画像、会話 transcript の解析、agent 以外の TUI への送信は扱わない。popup は最初の引用数行だけをプレビューする。入力は末尾への追加・削除で、カーソル編集はない。小さな端末では案内が省略される。Enter と Ctrl+J の区別には CR/LF を区別できる端末が必要。サーバーが拒否した blocked agent への入力はエラーになる。
+画像と会話 transcript は扱わない。選択は行単位で、列の一部分だけの選択はない。scrollback は host が起動時に返した範囲までで、alternate screen の TUI は host に過去の行がない場合がある。visible と history は別々の API 読み取りなので、更新中の境界は原子的な取得ではない。選択中に端末サイズや pane 配置を変えた場合は閉じて開き直す。背景 pane を指定する起動は想定しない。
+
+入力は末尾への追加・削除で、カーソル編集はない。Enter と Ctrl+J の区別には CR/LF を区別できる端末が必要。blocked agent への入力が Herdr に拒否された場合はエラーになる。
 
 ## ADR: 赤の保存・文面・配置（2026-10-27、確定）
 
@@ -103,12 +117,29 @@ copy_on_select = false
 
 指摘は私有のログとして残り、agent は短い引用と補足で元画面を追える。独立した local plugin として更新できる。引用の上限外と画像は残らず、ログの共有・保持期間は利用者が管理する。
 
+## ADR: その場の色付き静止画面で選ぶ（差し戻し1、確定）
+
+### 文脈
+
+利用者の macOS Moshi → ssh → Herdr 0.9.5 の検収では、マウス選択・prefix なしキー・copy_on_select=false・copy mode のいずれでも selected_text が届かず、選択メニューにも action が出なかった。[#3380](https://github.com/herdrdev/herdr/issues/3380)、[#3353](https://github.com/herdrdev/herdr/issues/3353)、[#4599](https://github.com/herdrdev/herdr/issues/4599) と一致するとの親 session の調査結果を受けた。Ctrl+クリックも Moshi が右クリックへ変換し、link handler に届かなかった。context に座標はない。
+
+### 決定
+
+キー起動時の元 pane の色・位置・大きさ・scroll 位置を保った snapshot を overlay に描き、plugin 自身で選択する。文字色を保ち、選択は左端の印で示す。Enter でひとことへ進み、保存・文面・配置の決定1〜3は維持する。selected_text が届いた場合の優先分岐は残す。利用者の config 本体は管理せず、README にキー設定例だけを置く。
+
+### 代替案
+
+Herdr の選択を待つ方式や Ctrl+クリックには実機で通る経路がない。単色の選択一覧や中央 popup への移動は、利用者が見ていた位置・色の手掛かりを失う。overlay は tab 全体だが pane rect と外枠の補正で同じ位置に描けたため、pane サイズの popup への妥協は不要だった。
+
+### 結果
+
+Herdr の選択引継ぎに依存せず、いつもの画面上で行を選べる。原画面の process は止めず、表示だけを固定する。plugin が ANSI 行・マウス・scrollback を扱う責任を持ち、将来 selected_text が修正されれば既存の優先分岐も使える。
+
 ## テスト
 
 ```bash
-python3 config/herdr/plugins/local/tests/test_redpen.py
-python3 config/herdr/plugins/local/tests/test_plugins.py
-python3 config/herdr/plugins/local/tests/test_agent_links.py
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+  -s config/herdr/plugins/local/tests -p 'test_*.py' -v
 ```
 
-実 Herdr に接続しない。文面、引用の各行・Unicode 上限、送り先、private JSONL、失敗・不在・会話交代、visible fallback、popup パラメータ、入力操作、manifest とキーを検査する。
+実 Herdr に接続しない。引用、Unicode 上限、送り先、私有 JSONL、失敗・不在・会話交代、ANSI の行分割・SGR保持・セル幅切り出し、overlay 座標補正、マウス・範囲・scrollback、Esc、snapshot 消費と plain text への変換を検査する。

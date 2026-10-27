@@ -8,8 +8,11 @@ import os
 from pathlib import Path
 import socket
 import stat
+import tempfile
 import sys
 import unicodedata
+
+from frozen import ansi_rows, plain, choose
 
 LIMIT = 4000
 
@@ -26,8 +29,8 @@ class Host:
             raise RedpenError('Inherited absolute Herdr socket required')
 
     def call(self, method, **params):
-        # The installed CLI omits popup from its placement enum. Use the
-        # documented, bundled socket schema for this and the other requests.
+        # Use the bundled socket schema so ANSI snapshots and geometry share
+        # the inherited session without CLI display formatting.
         try:
             with socket.socket(socket.AF_UNIX) as client:
                 client.settimeout(10)
@@ -61,15 +64,35 @@ def snapshot(host, context):
     if not pane_id:
         raise RedpenError('Source pane unavailable')
     pane = host.call('pane.get', pane_id=pane_id)['pane']
+    red = dict(source=dict(pane_id=pane_id, title=title(pane),
+                           cwd=pane.get('foreground_cwd') or pane.get('cwd') or context.get('focused_pane_cwd'),
+                           tab_id=pane['tab_id']))
     selected = context.get('selected_text')
-    origin = 'selection' if isinstance(selected, str) and selected else 'visible'
-    text = selected if origin == 'selection' else host.call(
-        'pane.read', pane_id=pane_id, source='visible', format='text', strip_ansi=True)['read']['text']
-    return dict(source=dict(pane_id=pane_id, title=title(pane),
-                            cwd=pane.get('foreground_cwd') or pane.get('cwd') or context.get('focused_pane_cwd'),
-                            tab_id=pane['tab_id']),
-                quote=text[:LIMIT], quote_origin=origin, quote_truncated=len(text) > LIMIT,
-                quote_original_length=len(text))
+    if isinstance(selected, str) and selected:
+        set_quote(red, selected, 'selection')
+        return red
+    layout = host.call('pane.layout', pane_id=pane_id)['layout']
+    rect = next(p['rect'] for p in layout['panes'] if p['pane_id'] == pane_id)
+    visible = ansi_rows(host.call('pane.read', pane_id=pane_id, source='visible',
+                                 format='ansi', strip_ansi=False)['read']['text'])
+    scroll = pane.get('scroll', {})
+    count = scroll.get('max_offset_from_bottom', 0) + scroll.get('viewport_rows', len(visible))
+    offset = scroll.get('offset_from_bottom', 0)
+    rows, top = visible, 0
+    if count > len(visible):
+        history = ansi_rows(host.call('pane.read', pane_id=pane_id, source='recent',
+                                     lines=count, format='ansi', strip_ansi=False)['read']['text'])
+        # visible is authoritative if output changed between the two reads.
+        top = max(0, len(history) - offset - len(visible))
+        rows = history[:top] + visible + history[top + len(visible):]
+    red['frame'] = dict(rows=rows, top=top, rect=rect, area=layout['area'], scroll=scroll)
+    return red
+
+
+def set_quote(red, text, origin):
+    text = plain(text)
+    red.update(quote=text[:LIMIT], quote_origin=origin, quote_truncated=len(text) > LIMIT,
+               quote_original_length=len(text))
 
 
 def message(red, target, note):
@@ -95,11 +118,14 @@ class Store:
         self.root = base / 'herdr-redpen'
         self.path = self.root / 'reds.jsonl'
 
-    def open(self):
+    def prepare(self):
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         info = self.root.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise RedpenError('Redpen state directory must be private (0700) and owned by you')
+
+    def open(self):
+        self.prepare()
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         info = os.fstat(fd)
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
@@ -138,12 +164,22 @@ def submit(host, store, red, target, note):
     return record
 
 
-def open_popup(host):
+def open_overlay(host):
     context = json.loads(host.env.get('HERDR_PLUGIN_CONTEXT_JSON') or '{}')
     red = snapshot(host, context)
-    host.call('plugin.pane.open', plugin_id='redpen', entrypoint='compose', placement='popup',
-              focus=True, width='80%', height='60%',
-              env={'HERDR_REDPEN_SNAPSHOT': json.dumps(red, ensure_ascii=True)})
+    store = Store(host.env)
+    store.prepare()
+    # History may exceed the OS environment/argv limit. Pass a private snapshot
+    # file, consumed and removed by the overlay process, rather than its text.
+    fd, name = tempfile.mkstemp(prefix='snapshot-', suffix='.json', dir=store.root)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as output:
+            json.dump(red, output, ensure_ascii=False)
+        host.call('plugin.pane.open', plugin_id='redpen', entrypoint='compose', placement='overlay',
+                  focus=True, env={'HERDR_REDPEN_SNAPSHOT_FILE': name})
+    except BaseException:
+        Path(name).unlink(missing_ok=True)
+        raise
 
 
 def display(value):
@@ -204,9 +240,18 @@ def compose(host, store, screen, red):
 def main():
     host = Host(dict(os.environ))
     if sys.argv[1:] == ['open']:
-        open_popup(host)
+        open_overlay(host)
     elif sys.argv[1:] == ['compose']:
-        red = json.loads(host.env['HERDR_REDPEN_SNAPSHOT'])
+        path = Path(host.env['HERDR_REDPEN_SNAPSHOT_FILE'])
+        try:
+            red = json.loads(path.read_text())
+        finally:
+            path.unlink(missing_ok=True)
+        if 'frame' in red:
+            quote = choose(red.pop('frame'))
+            if quote is None:
+                return
+            set_quote(red, quote, 'frozen')
         curses.wrapper(lambda screen: compose(host, Store(host.env), screen, red))
     else:
         raise RedpenError('Usage: run.sh open|compose')

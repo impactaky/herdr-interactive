@@ -14,7 +14,9 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('redpen', ROOT / 'redpen/redpen.py')
 rp = importlib.util.module_from_spec(spec)
+sys.path.insert(0, str(ROOT / 'redpen'))
 spec.loader.exec_module(rp)
+sys.path.pop(0)
 A = dict(pane_id='w1:p1', tab_id='w1:t1', agent='codex', state_change_seq=2,
          agent_session={'value': 'a'}, terminal_title_stripped='Agent A')
 B = dict(pane_id='w1:p2', tab_id='w1:t1', agent='claude', state_change_seq=5,
@@ -26,9 +28,10 @@ class FakeHost:
     def __init__(self):
         self.env = dict(HERDR_PANE_ID=A['pane_id'])
         self.calls = []
-        self.pane = dict(A, cwd='/source')
+        self.pane = dict(A, cwd='/source', scroll=dict(viewport_rows=2, max_offset_from_bottom=2, offset_from_bottom=1))
         self.agents = [A, B]
-        self.visible = 'visible\nviewport'
+        self.visible = '\x1b[31mvisible\x1b[0m\r\nviewport'
+        self.history = 'older\r\n' + self.visible + '\r\nnewer'
         self.live = A
         self.fail = False
 
@@ -37,7 +40,10 @@ class FakeHost:
         if method == 'pane.get':
             return {'pane': self.pane}
         if method == 'pane.read':
-            return {'type': 'pane_read', 'read': {'text': self.visible}}
+            return {'type': 'pane_read', 'read': {'text': self.visible if params['source'] == 'visible' else self.history}}
+        if method == 'pane.layout':
+            return {'layout': {'area': dict(x=0, y=0, width=100, height=24),
+                    'panes': [dict(pane_id=self.pane['pane_id'], rect=dict(x=20, y=2, width=50, height=4))]}}
         if method == 'agent.list':
             return {'agents': self.agents}
         if method == 'agent.get':
@@ -118,19 +124,55 @@ class Redpen(unittest.TestCase):
         self.assertTrue(saved['quote_truncated'])
         self.assertEqual(saved['quote_original_length'], rp.LIMIT + 1)
 
-    def test_no_selection_uses_visible_source_before_popup(self):
+    def test_no_selection_freezes_ansi_visible_and_history_before_overlay(self):
         for selected in (None, ''):
             red = rp.snapshot(self.host, {'selected_text': selected})
-            self.assertEqual(red['quote'], self.host.visible)
-            self.assertEqual(red['quote_origin'], 'visible')
-        self.assertIn(('pane.read', dict(pane_id=A['pane_id'], source='visible', format='text', strip_ansi=True)), self.host.calls)
-        self.host.env['HERDR_PLUGIN_CONTEXT_JSON'] = json.dumps({'focused_pane_id': SHELL['pane_id']})
+            self.assertEqual(red['frame']['rows'][1:3], rp.ansi_rows(self.host.visible))
+            self.assertEqual(red['frame']['top'], 1)
+            self.assertEqual(red['frame']['scroll']['offset_from_bottom'], 1)
+        self.assertIn(('pane.read', dict(pane_id=A['pane_id'], source='visible', format='ansi', strip_ansi=False)), self.host.calls)
+        self.host.env.update(HOME=str(self.base), XDG_STATE_HOME=str(self.base / 'state'))
         with patch.object(rp, 'snapshot', return_value=red):
-            rp.open_popup(self.host)
+            rp.open_overlay(self.host)
         params = self.host.calls[-1][1]
-        self.assertEqual(params['placement'], 'popup')
-        self.assertNotIn('target_pane_id', params)  # Server rejects it for popup.
-        self.assertEqual(json.loads(params['env']['HERDR_REDPEN_SNAPSHOT']), red)
+        self.assertEqual(params['placement'], 'overlay')
+        self.assertNotIn('target_pane_id', params)
+        path = Path(params['env']['HERDR_REDPEN_SNAPSHOT_FILE'])
+        self.assertEqual(json.loads(path.read_text()), red)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_frozen_main_consumes_snapshot_and_logs_only_selected_plain_text(self):
+        self.store.prepare()
+        path = self.store.root / 'snapshot-test.json'
+        red = rp.snapshot(self.host, {})
+        path.write_text(json.dumps(red))
+        self.host.env.update(HOME=str(self.base), XDG_STATE_HOME=str(self.base / 'state'),
+                             HERDR_REDPEN_SNAPSHOT_FILE=str(path))
+        screen = Screen(['note', '\r'])
+        with patch.object(rp, 'Host', return_value=self.host), patch.object(rp.sys, 'argv', ['redpen.py', 'compose']), \
+             patch.object(rp, 'choose', return_value='\x1b[31mchosen\x1b[0m'), \
+             patch.object(rp.curses, 'wrapper', side_effect=lambda draw: draw(screen)), \
+             patch.object(rp.curses, 'raw'), patch.object(rp.curses, 'nonl'):
+            rp.main()
+        self.assertFalse(path.exists())
+        saved = self.records()[0]
+        self.assertEqual(saved['quote'], 'chosen')
+        self.assertEqual(saved['quote_origin'], 'frozen')
+        self.assertNotIn('frame', saved)
+
+    def test_frozen_escape_consumes_snapshot_without_delivery_or_record(self):
+        self.store.prepare()
+        path = self.store.root / 'snapshot-test.json'
+        path.write_text(json.dumps(rp.snapshot(self.host, {})))
+        self.host.env['HERDR_REDPEN_SNAPSHOT_FILE'] = str(path)
+        self.host.calls.clear()
+        with patch.object(rp, 'Host', return_value=self.host), patch.object(rp.sys, 'argv', ['redpen.py', 'compose']), \
+             patch.object(rp, 'choose', return_value=None), patch.object(rp.curses, 'wrapper') as compose:
+            rp.main()
+        self.assertFalse(path.exists())
+        self.assertFalse(self.store.path.exists())
+        self.assertEqual(self.host.calls, [])
+        compose.assert_not_called()
 
     def test_targets_source_first_then_latest_state_same_tab(self):
         foreign = dict(B, pane_id='w2:p1', tab_id='w2:t1', state_change_seq=99)
@@ -211,14 +253,11 @@ class Redpen(unittest.TestCase):
             with self.assertRaisesRegex(rp.RedpenError, 'agent_blocked'):
                 host.call('agent.prompt', target=A['pane_id'], text='note')
 
-    def test_manifest_and_noncolliding_key(self):
+    def test_manifest_and_readme_key_example(self):
         manifest = tomllib.loads((ROOT / 'redpen/herdr-plugin.toml').read_text())
         self.assertEqual(manifest['actions'][0]['contexts'], ['pane', 'selection'])
-        self.assertEqual(manifest['panes'][0]['placement'], 'popup')
-        config = tomllib.loads((ROOT.parents[1] / 'config.toml').read_text())
-        keys = [k['key'] for k in config['keys']['command']]
-        self.assertEqual(len(keys), len(set(keys)))
-        self.assertIn('prefix+alt+r', keys)
+        self.assertEqual(manifest['panes'][0]['placement'], 'overlay')
+        self.assertIn('prefix+alt+r', (ROOT / 'redpen/README.md').read_text())
 
 
 if __name__ == '__main__':
