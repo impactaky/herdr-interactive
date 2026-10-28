@@ -7,12 +7,12 @@ platforms = ["linux"]
 
 [[panes]]
 id = "compose"
-title = "ask · Enter 次へ / V 範囲 / j,k ↑↓ / PgUp,Dn / Esc"
+title = "ask · Enter next / V range / j,k ↑↓ / PgUp,Dn / Esc"
 placement = "overlay"
 command = ["bash", "-c", 'exec bash "${HERDR_PLUGIN_ROOT:?}/run.sh" compose']
 
 [[actions]]
 id = "ask"
-title = "赤を入れる"
+title = "Ask about this"
 contexts = ["pane", "selection"]
 command = ["bash", "run.sh", "open"]

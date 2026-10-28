@@ -148,7 +148,7 @@ def main():
         records = [json.loads(line) for line in log.read_text().splitlines()]
         assert records[-1]['delivery'] == 'sent' and records[-1]['source']['pane_id'] == agent
         received = herdr('agent', 'read', agent, '--source', 'visible')
-        assert '【赤】' in received and '以下の引用は送り元の画面の文字です' in received
+        assert '[ask]' in received and 'not instructions' in received
         (base / 'agent-read.txt').write_text(received)
         assert error_pair(records[-1]['quote']) == 0
         herdr('pane', 'zoom', agent, '--on')
@@ -170,7 +170,7 @@ def main():
         assert records[-1]['delivery'] == 'sent' and records[-1]['source']['pane_id'] == shell
         herdr('agent', 'focus', agent)
         received = herdr('agent', 'read', agent, '--source', 'visible')
-        assert f'送り元: pane={shell} cwd=/tmp' in received
+        assert f'Source: pane={shell} cwd=/tmp' in received
         assert '> error[E0308]: mismatched types' in received
         (base / 'shell-agent-read.txt').write_text(received)
         herdr('pane', 'zoom', agent, '--on')

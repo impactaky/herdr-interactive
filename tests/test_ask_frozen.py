@@ -173,7 +173,7 @@ class Frozen(unittest.TestCase):
              patch.object(frozen.os, 'get_terminal_size', return_value=os.terminal_size((27, 10))), \
              patch.object(frozen, 'read_key', side_effect=keys):
             self.assertIsNone(frozen.choose(frame))
-        self.assertIn('範囲を小さく', output.getvalue())
+        self.assertIn('select fewer lines', output.getvalue())
         self.assertTrue(output.getvalue().endswith('\x1b[?1049l'))
 
     def test_popup_wraps_unicode_note_and_retains_tail(self):
@@ -194,6 +194,21 @@ class Frozen(unittest.TestCase):
         rendered = frozen.popup_render((0, 0, 8, 6), ['heading', 'help', 'あいうえお'])
         # Width 6 inside: 'あいう' then 'えお' on the next row.
         self.assertTrue(rendered.endswith('\x1b[5;6H\x1b[?25h'))
+
+    def test_popup_colors_heading_hint_and_note_differently(self):
+        rendered = frozen.popup_render((0, 0, 40, 6), ['ask → w1:p1', 'Enter send', 'my note'])
+        self.assertIn(frozen.HEADING + 'ask → w1:p1', rendered)
+        self.assertIn(frozen.HINT + 'Enter send', rendered)
+        self.assertIn(frozen.NOTE + 'my note', rendered)
+        self.assertEqual(len({frozen.HEADING, frozen.HINT, frozen.NOTE}), 3)
+
+    def test_popup_wraps_hint_at_separators_in_narrow_box(self):
+        hint = 'Enter send · Ctrl+J newline · Tab target · Esc cancel'
+        rendered = frozen.popup_render((0, 0, 32, 6), ['heading', hint, 'note'])
+        text = frozen.plain(rendered)
+        for key in ('Enter send', 'Ctrl+J newline', 'Tab target', 'Esc cancel'):
+            self.assertIn(key, text)
+        self.assertIn('note', text)
 
 
 if __name__ == '__main__':

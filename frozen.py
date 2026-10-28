@@ -8,6 +8,9 @@ import tty
 import unicodedata
 
 RESET = '\x1b[0m'
+HEADING = '\x1b[1;36m'
+HINT = '\x1b[90m'
+NOTE = '\x1b[1;97m'
 SELECTED_BG = '\x1b[48;2;55;65;81m'
 BORDER = '\x1b[38;2;137;180;250m'
 # pane.read emits SGR and CRLF. Ignore other terminal commands (including OSC
@@ -208,8 +211,8 @@ class Selection:
 
 
 def popup_rect(selection, columns, lines):
-    """Place a 4–6 row box above/below every visible selected row."""
-    maximum = min(6, lines // 3)
+    """Place a 4–8 row box above/below every visible selected row."""
+    maximum = min(8, lines // 3)
     if maximum < 4 or columns < 12:
         return None
     start, end = -1, -1
@@ -237,34 +240,55 @@ def popup_rect(selection, columns, lines):
     return (x, y, width, height)
 
 
+def wrap_cells(text, width):
+    lines, line, used = [], '', 0
+    for char in text.expandtabs(4):
+        size = cell_width(char)
+        if used + size > width:
+            lines.append(line)
+            line, used = '', 0
+        line += char
+        used += size
+    return lines + [line]
+
+
+def pack_hint(text, width):
+    """Wrap the key hint at its ' · ' separators so no key is cut off."""
+    lines = []
+    for item in text.split(' · '):
+        joined = lines[-1] + ' · ' + item if lines else item
+        if lines and sum(cell_width(c) for c in joined) <= width:
+            lines[-1] = joined
+        else:
+            lines.extend(wrap_cells(item, width))
+    return lines
+
+
 def popup_render(rect, rows):
     x, y, width, height = rect
+    inner = width - 2
     # Heading and help stay visible; show the tail of a multiline note.
-    note_rows = []
-    for row in rows[2:]:
-        line, used = '', 0
-        for char in row.expandtabs(4):
-            size = cell_width(char)
-            if used + size > width - 2:
-                note_rows.append(line)
-                line, used = '', 0
-            line += char
-            used += size
-        note_rows.append(line)
-    content = rows[:2] + note_rows[-(height - 4):] if height > 4 else rows[:1] + note_rows[-1:]
+    note_rows = [line for row in rows[2:] for line in wrap_cells(row, inner)]
+    if height > 4:
+        hint = pack_hint(rows[1], inner)[:max(1, height - 4)]
+        notes = note_rows[-(height - 3 - len(hint)):]
+        content = [(HEADING, rows[0])] + [(HINT, line) for line in hint] + [(NOTE, line) for line in notes]
+    else:
+        content = [(HEADING, rows[0])] + [(NOTE, line) for line in note_rows[-1:]]
     output = []
     for index in range(height):
         if index in (0, height - 1):
-            line = ('┌' if index == 0 else '└') + '─' * (width - 2) + ('┐' if index == 0 else '┘')
+            line = ('┌' if index == 0 else '└') + '─' * inner + ('┐' if index == 0 else '┘')
         else:
-            text = content[index - 1] if index - 1 < len(content) else ''
-            clipped = crop(text.expandtabs(4), width - 2)
+            # Heading, help and the typed note each get their own color.
+            style, text = content[index - 1] if index - 1 < len(content) else (NOTE, '')
+            clipped = crop(text.expandtabs(4), inner)
             used = sum(cell_width(c) for c in plain(clipped))
-            line = '│' + clipped + ' ' * (width - 2 - used) + '│'
+            line = '│' + style + clipped + RESET + ' ' * (inner - used) + '│'
         output.append(f'\x1b[{y + index + 1};{x + 1}H' + RESET + line)
     # Park a visible cursor after the note: terminal IMEs draw preedit text there.
     row = min(len(content), height - 2)
-    used = sum(cell_width(c) for c in plain(crop(content[row - 1].expandtabs(4), width - 2))) if row else 0
+    used = sum(cell_width(c) for c in plain(crop(content[row - 1][1].expandtabs(4), inner))) if row else 0
     column = x + 1 + min(used, width - 3)
     return ''.join(output) + f'\x1b[{y + row + 1};{column + 1}H\x1b[?25h'
 
@@ -306,7 +330,7 @@ def choose(frame):
             if result == 'accept':
                 if popup_rect(selection, size.columns, size.lines) is not None:
                     return selection
-                notice = '\x1b[1;1H' + RESET + '入力欄の場所がありません。範囲を小さく選び直してください'
+                notice = '\x1b[1;1H' + RESET + 'No room for the input box; select fewer lines'
     finally:
         output.write(RESET + '\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l')
         output.flush()
