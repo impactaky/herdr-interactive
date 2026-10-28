@@ -203,8 +203,28 @@ def main(herdr_config=None):
         herdr('pane', 'zoom', agent, '--on')
         time.sleep(.5)
         capture('batch-delivered')
+        # The everyday case: one agent filling the tab, asking about its own output.
+        herdr('pane', 'zoom', agent, '--off')
+        herdr('pane', 'close', shell)
+        time.sleep(.6)
+        herdr('agent', 'focus', agent)
+        herdr('agent', 'prompt', agent, 'Print the same two Rust error lines again on their own, '
+              'then one short line: "parse_count returns String". No tools.')
+        visible = wait_output(agent, lambda text: error_pair(text) is not None)
+        row = error_pair(visible)
+        sent = len(log.read_text().splitlines())
+        herdr('plugin', 'action', 'invoke', 'interactive.ask'); time.sleep(.6)
+        # Keyboard selection starts at the top visible row, independent of borders.
+        keys(*(['j'] * row)); keys('V', 'j')
+        keys('Enter'); literal('なんで String になってるの？「理由:」で始めて1文で答えて。')
+        capture('single-popup')
+        keys('Enter')
+        wait_output(agent, has_answer('理由:'))
+        record = json.loads(log.read_text().splitlines()[sent])
+        assert record['delivery'] == 'sent' and error_pair(record['quote']) == 0, record['quote']
+        capture('single-delivered')
         assert log.stat().st_mode & 0o777 == 0o600
-        print('PASS: link, drag, popup, sent x2, batch, no-agent, Esc/focus, private log')
+        print('PASS: link, drag, popup, sent x2, batch, single pane, no-agent, Esc/focus, private log')
         print('Evidence:', base)
     finally:
         run(['herdr', '--session', base.name, 'server', 'stop'], check=False)

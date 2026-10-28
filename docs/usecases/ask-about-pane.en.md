@@ -65,6 +65,12 @@ Sending from a shell pane to the agent in the same tab:
 
 ![From shell to agent](../images/shell-to-agent.png)
 
+In a tab with a single pane, the input box spans the pane's full width, just above or below the selected lines:
+
+![Asking in a single pane](../images/single-popup.png)
+
+![The ask delivered in a single pane](../images/single-delivered.png)
+
 When there is no agent:
 
 ![Log only](../images/no-agent.png)

@@ -4,9 +4,11 @@
 
 A Herdr plugin that lets you point at lines in any pane — Claude Code, Codex, a shell, a log, any TUI — and ask an agent "what about this?". Press a key and the tab freezes in place, colors and layout intact. Select some lines, type a short note, and the plugin sends them to Claude Code / Codex as a quoted `[ask]`. You stay in your flow: once it is sent, you are back in the original pane.
 
-![Writing a note while the original screen stays visible](docs/images/shell-popup.png)
+![Selecting lines of the agent's output and writing a note](docs/images/single-popup.png)
 
-Here two error lines in the build log on the right are selected and the Codex agent on the left is asked where the type is decided. The selected lines and the neighboring pane stay visible while you type.
+Here two error lines printed by Codex are selected and that same Codex is asked why it is a String. The input box spans the width of the pane you opened ask in and sits just above or below the selection, so the selected lines and their surroundings stay visible while you type.
+
+![The ask as delivered, with the reply](docs/images/single-delivered.png)
 
 - Pure Python 3 standard library.
 - Linux, Herdr 0.9.5 or later.
@@ -46,6 +48,10 @@ On macOS terminals, Option often does not arrive as Alt, so the example uses `pr
 ![The ask and the agent's reply](docs/images/delivered.png)
 
 Destinations are the Claude Code / Codex agents in the same tab. If the pane you started from runs an agent, that agent is chosen; otherwise the most recently active agent in the tab. Press Tab in the input box to switch. When you ask from a shell or log pane, the source pane id and cwd are attached. Asks are delivered right away, even while the agent is busy.
+
+With panes side by side, the input box stays within the pane's width and never hides the neighbors. Below, an error in the build log on the right is asked to the Codex on the left.
+
+![Asking about a shell line while the neighboring pane stays visible](docs/images/shell-popup.png)
 
 ### Keys
 
@@ -183,6 +189,7 @@ The script starts a disposable Herdr session (120×36) inside a dedicated tmux a
 - Asking Codex about two lines of its own output
 - Asking the Codex in the same tab about a shell line
 - Queueing with Ctrl+A and sending together
+- Asking Codex about its own output in a single-pane tab
 
 The ANSI from `tmux capture-pane -e` is turned into HTML by `scripts/ansi_to_html.py` and into PNGs under `docs/images/` by agent-browser. Before saving, it checks for personal paths, email addresses and token-like strings and stops if it finds any. Review the images yourself before publishing.
 

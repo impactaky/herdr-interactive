@@ -4,9 +4,11 @@
 
 Herdr のどの pane（Claude Code / Codex / shell / ログ / TUI）でも、気になる行を指して「ここどうなの？」と agent に聞ける plugin です。キーを押すと、その tab が色も位置もそのままの静止画面になり、行を選んでひとこと書くと、引用付きの `[ask]` として Claude Code / Codex に届きます。作業の流れを切らず、送り終えると元の pane に戻ります。
 
-![元の画面を見ながらひとことを書く](docs/images/shell-popup.png)
+![agent の出力の行を選んでひとことを書く](docs/images/single-popup.png)
 
-見本では、右の build log のエラー2行を選び、左の Codex に「これどこで型が決まってる？」と聞いています。入力中も、選んだ行と隣の pane が見えたままです。
+見本では、Codex が出したエラー2行を選び、その Codex に「なんで String になってるの？」と聞いています。入力枠は ask を開いた pane の幅で、選んだ行の上か下に出るので、選んだ行とその前後が見えたまま書けます。
+
+![届いた ask と返事](docs/images/single-delivered.png)
 
 - Python 3 の標準ライブラリだけで動きます。
 - Linux、Herdr 0.9.5 以降。
@@ -46,6 +48,10 @@ macOS の端末では Option が Alt として届かないことが多いため�
 ![agent に届いた ask と返事](docs/images/delivered.png)
 
 送り先は同じ tab の Claude Code / Codex です。起動した pane に agent がいればその agent、いなければ同じ tab で最近動いた agent が選ばれ、入力枠の Tab で切り替えられます。shell やログの pane から送ると、送り元の pane id と cwd が添えられます。agent が作業中でも待たずに送ります。
+
+pane を並べているときは、入力枠はその pane の幅に収まり、隣の pane は隠しません。次の例では、右の build log のエラーを左の Codex に聞いています。
+
+![隣の pane を見ながら shell の行を聞く](docs/images/shell-popup.png)
 
 ### 操作
 
@@ -183,6 +189,7 @@ Herdr 0.9.5、tmux、agent-browser（Chromium）、ログイン済みの Codex �
 - Codex の出力の2行を選んで聞く
 - shell の行を同じ tab の Codex に聞く
 - Ctrl+A でためて、まとめて送る
+- 1つの pane だけの tab で、Codex 自身の出力を選んで聞く
 
 `tmux capture-pane -e` の ANSI を `scripts/ansi_to_html.py` で HTML にし、agent-browser で `docs/images/` の PNG にします。保存の前に、個人の path・メールアドレス・token らしき文字列が写っていないかを確かめ、見つかったら止まります。公開する前には画像も目で確かめてください。
 

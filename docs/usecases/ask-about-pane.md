@@ -65,6 +65,12 @@ shell pane から同じ tab の agent に送る:
 
 ![shell から agent](../images/shell-to-agent.png)
 
+1つの pane だけの tab では、入力枠は pane の横幅いっぱいに、選んだ行のすぐ上か下に出る:
+
+![1つの pane で聞く](../images/single-popup.png)
+
+![1つの pane で届いた ask](../images/single-delivered.png)
+
 agent がいない場合:
 
 ![記録だけ](../images/no-agent.png)
