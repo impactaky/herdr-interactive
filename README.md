@@ -13,8 +13,8 @@ Herdr の任意 pane（Claude Code / Codex / shell / ログ / TUI）に、その
 Herdr 0.9.5、Linux で使う。
 
 ```bash
-# 公開後の導入
-herdr plugin install github:impactaky/herdr-interactive
+# GitHub から
+herdr plugin install impactaky/herdr-interactive
 # ローカル checkout から
 herdr plugin link /absolute/path/to/herdr-interactive
 ```
