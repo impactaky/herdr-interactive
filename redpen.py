@@ -12,7 +12,7 @@ import tempfile
 import sys
 import unicodedata
 
-from frozen import ansi_rows, plain, choose
+from frozen import ansi_rows, plain, choose, popup_rect, popup_render
 
 LIMIT = 4000
 
@@ -115,8 +115,8 @@ class Store:
         base = Path(env.get('XDG_STATE_HOME') or Path(env['HOME']) / '.local/state')
         if not base.is_absolute():
             raise RedpenError('XDG_STATE_HOME must be absolute')
-        self.root = base / 'herdr-redpen'
-        self.path = self.root / 'reds.jsonl'
+        self.root = base / 'herdr-interactive'
+        self.path = self.root / 'redpen.jsonl'
 
     def prepare(self):
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -175,7 +175,7 @@ def open_overlay(host):
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as output:
             json.dump(red, output, ensure_ascii=False)
-        host.call('plugin.pane.open', plugin_id='redpen', entrypoint='compose', placement='overlay',
+        host.call('plugin.pane.open', plugin_id='interactive', entrypoint='compose', placement='overlay',
                   focus=True, env={'HERDR_REDPEN_SNAPSHOT_FILE': name})
     except BaseException:
         Path(name).unlink(missing_ok=True)
@@ -186,31 +186,33 @@ def display(value):
     return ''.join(c if c in '\n\t' or not unicodedata.category(c).startswith('C') else '�' for c in value)
 
 
-def compose(host, store, screen, red):
+def compose(host, store, screen, red, selection=None):
     targets = candidates(host.call('agent.list')['agents'], red['source'])
     index, note, notice = 0, '', ''
     curses.raw()
     curses.nonl()  # Enter (CR) submits; Ctrl+J (LF) inserts a newline.
     screen.keypad(True)
+    failed = False
     while True:
         target = targets[index] if targets else None
         height, width = screen.getmaxyx()
-        rows = ['赤: ' + red['source']['title'],
-                '送り先: ' + (target['pane_id'] + ' ' + title(target) if target else 'なし — 記録だけ残します'),
-                'Enter 送信・記録 / Ctrl+J 改行 / Tab 送り先 / Esc 閉じる',
-                notice, '引用' + ('（切り詰め）' if red['quote_truncated'] else '') + ':']
-        rows += red['quote'].splitlines()[:max(0, min(4, height - 9))] + ['ひとこと:']
-        rows += note.split('\n')[-max(1, height - 1 - len(rows)):]
-        screen.erase()
-        for y, line in enumerate(rows[:height - 1]):
-            try:
-                screen.addnstr(y, 0, display(line).expandtabs(4), max(0, width - 1))
-            except curses.error:
-                pass  # Narrow windows / double-width characters at the edge.
+        background = selection.render(width, height) if selection else '\x1b[0m\x1b[2J'
+        rect = popup_rect(selection, width, height)
+        if rect is None:
+            raise RedpenError('入力欄の場所がありません。画面を戻して選び直してください')
+        destination = target['pane_id'] + ' ' + title(target) if target else 'なし — 記録だけ残します'
+        rows = [notice or '【赤】→ ' + destination,
+                'Enter 送信 / Ctrl+J 改行 / Tab 送り先 / Esc 取消']
+        rows += note.split('\n')
+        # curses handles UTF-8 input; ANSI output keeps the original SGR colors.
         screen.refresh()
+        sys.stdout.write(background + popup_render(rect, [display(row) for row in rows]))
+        sys.stdout.flush()
         key = screen.get_wch()
         if key == '\x1b':
             return
+        if failed:
+            continue  # Never automatically retry a possibly delivered request.
         if key == '\t' and targets:
             index = (index + 1) % len(targets)
         elif key in ('\r', curses.KEY_ENTER):
@@ -220,14 +222,9 @@ def compose(host, store, screen, red):
             try:
                 submit(host, store, red, target, note)
             except (RedpenError, OSError) as error:
-                # A failed request can have reached the agent. Do not offer an
-                # accidental resubmit: retain the message until Esc closes.
-                screen.erase()
-                screen.addnstr(0, 0, display(str(error)), max(0, width - 1))
-                screen.addnstr(1, 0, '送信結果を確認してください。Esc で閉じる', max(0, width - 1))
-                screen.refresh()
-                while screen.get_wch() != '\x1b':
-                    pass
+                notice = str(error) + ' — 送信結果を確認し Esc で閉じる'
+                failed = True
+                continue
             return
         elif key in ('\b', '\x7f', curses.KEY_BACKSPACE):
             note = note[:-1]
@@ -247,12 +244,13 @@ def main():
             red = json.loads(path.read_text())
         finally:
             path.unlink(missing_ok=True)
+        selection = None
         if 'frame' in red:
-            quote = choose(red.pop('frame'))
-            if quote is None:
+            selection = choose(red.pop('frame'))
+            if selection is None:
                 return
-            set_quote(red, quote, 'frozen')
-        curses.wrapper(lambda screen: compose(host, Store(host.env), screen, red))
+            set_quote(red, selection.quote(), 'frozen')
+        curses.wrapper(lambda screen: compose(host, Store(host.env), screen, red, selection))
     else:
         raise RedpenError('Usage: run.sh open|compose')
 

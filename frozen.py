@@ -50,24 +50,26 @@ def cell_width(char):
     return 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
 
 
-def crop(row, width):
+def crop(row, width, start=0):
     """Keep SGR intact while clipping by terminal cells, including CJK marks."""
     result, column, position = [], 0, 0
     for match in ESCAPE.finditer(row):
-        segment, column = _clip(row[position:match.start()], column, width)
+        segment, column = _clip(row[position:match.start()], column, width, start)
         result.append(segment)
         result.append(match.group())
         position = match.end()
-    segment, _ = _clip(row[position:], column, width)
+    segment, _ = _clip(row[position:], column, width, start)
     return ''.join(result) + segment + RESET
 
 
-def _clip(text, column, width):
+def _clip(text, column, width, start=0):
     result = []
     for char in text:
         size = 8 - column % 8 if char == '\t' else cell_width(char)
-        if column + size <= width:
+        if column >= start and column + size <= width:
             result.append(' ' * size if char == '\t' else char)
+        elif column < start < column + size <= width:
+            result.append(' ' * (column + size - start))
         column += size
     return ''.join(result), column
 
@@ -80,7 +82,8 @@ class Selection:
         self.cursor = self.top
         self.anchor = None
         self.dragging = False
-        self.height = max(1, frame['rect']['height'] - 2)
+        self.border = 0 if frame.get('scroll', {}).get('viewport_rows') == frame['rect']['height'] else 1
+        self.height = max(1, frame['rect']['height'] - 2 * self.border)
 
     def bounds(self):
         return sorted((self.cursor, self.cursor if self.anchor is None else self.anchor))
@@ -124,8 +127,8 @@ class Selection:
         # SGR mouse coordinates are one-based and include the pane border.
         inset_x, inset_y = getattr(self, 'inset', (0, 0))
         x, y = x - 1 + inset_x, y - 1 + inset_y
-        inside = (rect['x'] < x < rect['x'] + rect['width'] - 1
-                  and rect['y'] < y < rect['y'] + rect['height'] - 1)
+        inside = (rect['x'] + self.border <= x < rect['x'] + rect['width'] - self.border
+                  and rect['y'] + self.border <= y < rect['y'] + rect['height'] - self.border)
         if not inside and not self.dragging:
             return
         if button in (64, 65):
@@ -133,7 +136,7 @@ class Selection:
             return
         if button & 3 != 0:
             return
-        row = min(len(self.rows) - 1, self.top + max(0, min(self.height - 1, y - rect['y'] - 1)))
+        row = min(len(self.rows) - 1, self.top + max(0, min(self.height - 1, y - rect['y'] - self.border)))
         if match[4] == 'M' and not button & 32:
             self.cursor = self.anchor = row
             self.dragging = True
@@ -158,7 +161,7 @@ class Selection:
         if (width < 3 or height < 3 or x + 1 < 0 or y + 1 < 0
                 or x + width - 2 - gutter >= columns or y + height - 2 >= lines):
             raise ValueError('Source pane does not fit; restore terminal size and reopen Redpen')
-        self.height = height - 2
+        self.height = height - 2 * self.border
         self.inset = (inset_x, inset_y)
         output = [RESET, '\x1b[2J']
 
@@ -169,20 +172,76 @@ class Selection:
         label = ' Redpen: Enter 次へ / V 範囲 / j,k ↑↓ / PgUp,Dn / Esc '
         at(y, x, '┌' + crop(label, width - 2) + '┐')
         start, end = self.bounds()
-        for index in range(height - 2):
+        for index in range(self.height):
             row = self.top + index
             mark = '▌' if start <= row <= end else '│'
-            at(y + index + 1, x, RESET + mark)
+            if self.border:
+                at(y + index + 1, x, RESET + mark)
             content = self.rows[row] if row < len(self.rows) else ''
-            if x < 0 and start <= row <= end:
+            if (x < 0 or not self.border) and start <= row <= end:
                 # The overlay's own left border is outside our terminal. Use
                 # reverse video there without shifting/replacing source text.
                 content = '\x1b[7m' + ESCAPE.sub(lambda m: m.group() + '\x1b[7m', content)
-            at(y + index + 1, x + 1, crop(content, width - 2 - gutter))
-            at(y + index + 1, x + width - 1, RESET + '│')
+            content_x = x + self.border
+            clipped_left = max(0, -content_x)
+            at(y + index + self.border, max(0, content_x),
+               crop(content, min(width - 2 * self.border - gutter, columns - content_x), clipped_left))
+            if self.border:
+                at(y + index + 1, x + width - 1, RESET + '│')
         footer = f' {self.cursor + 1}/{len(self.rows)}  クリック=行 ドラッグ=範囲 '
         at(y + height - 1, x, '└' + crop(footer, width - 2) + '┘')
         return ''.join(output)
+
+
+def popup_rect(selection, columns, lines):
+    """Place a 4–6 row box above/below every visible selected row."""
+    maximum = min(6, lines // 3)
+    if maximum < 4 or columns < 12:
+        return None
+    start, end = -1, -1
+    if selection:
+        inset_y = selection.inset[1]
+        origin = selection.frame['rect']['y'] + selection.border - inset_y
+        first, last = selection.bounds()
+        start = max(0, origin + first - selection.top)
+        end = min(lines - 1, origin + last - selection.top)
+    above, below = max(0, start), max(0, lines - end - 1)
+    space = max(above, below)
+    height = min(maximum, space)
+    if height < 4:
+        return None
+    # Keep a context row between box and selection whenever there is room.
+    gap = int(space > height)
+    y = end + 1 + gap if below >= above else start - gap - height
+    return (2, y, columns - 4, height)
+
+
+def popup_render(rect, rows):
+    x, y, width, height = rect
+    # Heading and help stay visible; show the tail of a multiline note.
+    note_rows = []
+    for row in rows[2:]:
+        line, used = '', 0
+        for char in row.expandtabs(4):
+            size = cell_width(char)
+            if used + size > width - 2:
+                note_rows.append(line)
+                line, used = '', 0
+            line += char
+            used += size
+        note_rows.append(line)
+    content = rows[:2] + note_rows[-(height - 4):] if height > 4 else rows[:1] + note_rows[-1:]
+    output = []
+    for index in range(height):
+        if index in (0, height - 1):
+            line = ('┌' if index == 0 else '└') + '─' * (width - 2) + ('┐' if index == 0 else '┘')
+        else:
+            text = content[index - 1] if index - 1 < len(content) else ''
+            clipped = crop(text.expandtabs(4), width - 2)
+            used = sum(cell_width(c) for c in plain(clipped))
+            line = '│' + clipped + ' ' * (width - 2 - used) + '│'
+        output.append(f'\x1b[{y + index + 1};{x + 1}H' + RESET + line)
+    return ''.join(output) + '\x1b[?25l'
 
 
 def read_key(fd):
@@ -207,18 +266,22 @@ def choose(frame):
     output = sys.stdout
     saved = termios.tcgetattr(fd)
     selection = Selection(frame)
+    notice = ''
     try:
         tty.setraw(fd)
         output.write('\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1000h\x1b[?1002h\x1b[?1006h')
         while True:
             size = os.get_terminal_size(fd)
-            output.write(selection.render(size.columns, size.lines))
+            output.write(selection.render(size.columns, size.lines) + notice)
+            notice = ''
             output.flush()
             result = selection.handle(read_key(fd))
             if result == 'cancel':
                 return None
             if result == 'accept':
-                return selection.quote()
+                if popup_rect(selection, size.columns, size.lines) is not None:
+                    return selection
+                notice = '\x1b[1;1H' + RESET + '入力欄の場所がありません。範囲を小さく選び直してください'
     finally:
         output.write(RESET + '\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l')
         output.flush()

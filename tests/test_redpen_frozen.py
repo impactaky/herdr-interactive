@@ -2,12 +2,15 @@
 """ANSI rendering/selection checks, independent of Herdr and a real terminal."""
 import importlib.util
 import re
+import io
+import os
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch, Mock
 
 sys.dont_write_bytecode = True
-spec = importlib.util.spec_from_file_location('redpen_frozen', Path(__file__).resolve().parents[1] / 'redpen/frozen.py')
+spec = importlib.util.spec_from_file_location('redpen_frozen', Path(__file__).resolve().parents[1] / 'frozen.py')
 frozen = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(frozen)
 
@@ -107,6 +110,61 @@ class Frozen(unittest.TestCase):
         selection.handle('\x1b[<64;12;5M')
         self.assertEqual(selection.top, 0)
         self.assertEqual(selection.quote(), 'old')
+
+    def test_borderless_source_keeps_interior_cells_and_colors(self):
+        frame = dict(rows=['top', '\x1b[31mAB赤D\x1b[0m', 'third', 'bottom'], top=0,
+                     rect=dict(x=0, y=0, width=22, height=4),
+                     area=dict(width=22, height=4), scroll=dict(viewport_rows=4))
+        selection = frozen.Selection(frame)
+        output = selection.render(19, 2)
+        # Overlay border obscures source row/column zero; B is still column 1.
+        self.assertIn('\x1b[1;1H\x1b[31mB赤D', output)
+        self.assertIn('\x1b[2;1Hhird', output)
+        self.assertEqual(frozen.plain(frozen.crop('赤A', 3, start=1)), ' A')
+        selection.handle('\x1b[<0;2;1M')
+        selection.handle('\x1b[<0;2;1m')
+        self.assertEqual(selection.quote(), 'AB赤D')
+
+    def test_popup_avoids_selection_above_and_below_and_limits_height(self):
+        frame = dict(rows=['line'] * 34, top=0,
+                     rect=dict(x=0, y=0, width=120, height=36),
+                     area=dict(width=120, height=36))
+        for first, last in ((0, 1), (16, 17), (32, 33)):
+            selection = frozen.Selection(frame)
+            selection.cursor, selection.anchor = first, last
+            background = selection.render(117, 34)
+            x, y, width, height = frozen.popup_rect(selection, 117, 34)
+            self.assertLessEqual(height, 34 // 3)
+            self.assertTrue(y + height <= first or y > last)
+            self.assertIn('line', background)
+            self.assertIn('ひとこと', frozen.popup_render((x, y, width, height), ['heading', 'help', 'ひとこと']))
+        selection.cursor, selection.anchor = 0, 33
+        self.assertIsNone(frozen.popup_rect(selection, 117, 34))
+        self.assertIsNone(frozen.popup_rect(None, 100, 8))
+
+    def test_too_large_selection_can_be_cancelled_without_opening_input(self):
+        frame = dict(rows=['line'] * 10, top=0,
+                     rect=dict(x=0, y=0, width=30, height=12),
+                     area=dict(width=30, height=12))
+        keys = ['V'] + ['j'] * 9 + ['\r', '\x1b']
+        with patch.object(frozen.sys, 'stdin', Mock(fileno=lambda: 0)), \
+             patch.object(frozen.sys, 'stdout', new_callable=io.StringIO) as output, \
+             patch.object(frozen.termios, 'tcgetattr'), patch.object(frozen.termios, 'tcsetattr'), \
+             patch.object(frozen.tty, 'setraw'), \
+             patch.object(frozen.os, 'get_terminal_size', return_value=os.terminal_size((27, 10))), \
+             patch.object(frozen, 'read_key', side_effect=keys):
+            self.assertIsNone(frozen.choose(frame))
+        self.assertIn('範囲を小さく', output.getvalue())
+        self.assertTrue(output.getvalue().endswith('\x1b[?1049l'))
+
+    def test_popup_wraps_unicode_note_and_retains_tail(self):
+        rendered = frozen.popup_render((2, 3, 12, 6), ['heading', 'help', '日本語の入力が長い場合'])
+        self.assertIn('長い場', rendered)
+        self.assertIn('合', rendered)
+        for row in rendered.split('\x1b['):
+            if 'H' in row:
+                text = frozen.plain(row.split('H', 1)[1])
+                self.assertLessEqual(sum(frozen.cell_width(c) for c in text), 12)
 
 
 if __name__ == '__main__':

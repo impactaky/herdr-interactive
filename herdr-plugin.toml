@@ -1,4 +1,4 @@
-id = "redpen"
+id = "interactive"
 name = "Redpen"
 version = "0.1.0"
 min_herdr_version = "0.9.5"
@@ -12,7 +12,7 @@ placement = "overlay"
 command = ["bash", "-c", 'exec bash "${HERDR_PLUGIN_ROOT:?}/run.sh" compose']
 
 [[actions]]
-id = "open"
+id = "redpen"
 title = "赤を入れる"
 contexts = ["pane", "selection"]
 command = ["bash", "run.sh", "open"]

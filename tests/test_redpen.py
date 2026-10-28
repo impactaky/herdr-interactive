@@ -2,19 +2,20 @@
 """Host-free checks; never connects to a real Herdr socket."""
 import curses
 import importlib.util
+import io
 import json
 from pathlib import Path
 import sys
 import tempfile
 import tomllib
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('redpen', ROOT / 'redpen/redpen.py')
+spec = importlib.util.spec_from_file_location('redpen', ROOT / 'redpen.py')
 rp = importlib.util.module_from_spec(spec)
-sys.path.insert(0, str(ROOT / 'redpen'))
+sys.path.insert(0, str(ROOT))
 spec.loader.exec_module(rp)
 sys.path.pop(0)
 A = dict(pane_id='w1:p1', tab_id='w1:t1', agent='codex', state_change_seq=2,
@@ -58,16 +59,9 @@ class FakeHost:
 class Screen:
     def __init__(self, keys):
         self.keys = iter(keys)
-        self.rows = []
 
     def getmaxyx(self):
         return 24, 100
-
-    def erase(self):
-        pass
-
-    def addnstr(self, y, x, line, width):
-        self.rows.append(line)
 
     def refresh(self):
         pass
@@ -94,8 +88,10 @@ class Redpen(unittest.TestCase):
 
     def compose(self, keys):
         screen = Screen(keys)
-        with patch.object(rp.curses, 'raw'), patch.object(rp.curses, 'nonl'):
+        with patch.object(rp.curses, 'raw'), patch.object(rp.curses, 'nonl'), \
+             patch.object(rp.sys, 'stdout', new_callable=io.StringIO) as output:
             rp.compose(self.host, self.store, screen, self.red)
+        screen.output = output.getvalue()
         return screen
 
     def test_message_quotes_every_line_and_marks_source_as_data(self):
@@ -150,8 +146,10 @@ class Redpen(unittest.TestCase):
                              HERDR_REDPEN_SNAPSHOT_FILE=str(path))
         screen = Screen(['note', '\r'])
         with patch.object(rp, 'Host', return_value=self.host), patch.object(rp.sys, 'argv', ['redpen.py', 'compose']), \
-             patch.object(rp, 'choose', return_value='\x1b[31mchosen\x1b[0m'), \
+             patch.object(rp, 'choose', return_value=Mock(quote=lambda: '\x1b[31mchosen\x1b[0m', render=lambda *args: '')), \
              patch.object(rp.curses, 'wrapper', side_effect=lambda draw: draw(screen)), \
+             patch.object(rp, 'popup_rect', return_value=(2, 8, 96, 6)), \
+             patch.object(rp.sys, 'stdout', new_callable=io.StringIO), \
              patch.object(rp.curses, 'raw'), patch.object(rp.curses, 'nonl'):
             rp.main()
         self.assertFalse(path.exists())
@@ -193,6 +191,7 @@ class Redpen(unittest.TestCase):
         self.assertIsNone(records[1]['destination'])
         self.assertEqual(records[0]['note'], 'note\nsecond')
         self.assertIn('+00:00', records[0]['timestamp'])
+        self.assertEqual(self.store.path.relative_to(self.base / 'state').as_posix(), 'herdr-interactive/redpen.jsonl')
         self.assertEqual(self.store.root.stat().st_mode & 0o777, 0o700)
         self.assertEqual(self.store.path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(len([m for m, _ in self.host.calls if m == 'agent.prompt']), 2)
@@ -229,10 +228,23 @@ class Redpen(unittest.TestCase):
         self.assertEqual(self.store.path.read_bytes(), before)
         self.assertFalse(any(m.endswith('focus') for m, _ in self.host.calls))
 
+    def test_ui_escape_without_prior_log_leaves_no_record_or_delivery(self):
+        self.compose(['入力途中', '\x1b'])
+        self.assertFalse(self.store.path.exists())
+        self.assertFalse(any(method == 'agent.prompt' for method, _ in self.host.calls))
+
+    def test_ui_failure_is_shown_and_enter_does_not_resend(self):
+        self.host.fail = True
+        screen = self.compose(['note', '\r', '\r', '\x1b'])
+        self.assertIn('synthetic delivery failure', screen.output)
+        self.assertEqual(len(self.records()), 1)
+        self.assertEqual(self.records()[0]['delivery'], 'failed_or_unknown')
+        self.assertEqual(sum(m == 'agent.prompt' for m, _ in self.host.calls), 1)
+
     def test_ui_no_agent_records_without_prompt_and_shows_notice(self):
         self.host.agents = []
         screen = self.compose(['\r', 'note', '\r'])
-        self.assertTrue(any('記録だけ' in line for line in screen.rows))
+        self.assertIn('記録だけ', screen.output)
         self.assertEqual(self.records()[0]['delivery'], 'not_sent')
         self.assertFalse(any(m == 'agent.prompt' for m, _ in self.host.calls))
 
@@ -253,11 +265,12 @@ class Redpen(unittest.TestCase):
             with self.assertRaisesRegex(rp.RedpenError, 'agent_blocked'):
                 host.call('agent.prompt', target=A['pane_id'], text='note')
 
-    def test_manifest_and_readme_key_example(self):
-        manifest = tomllib.loads((ROOT / 'redpen/herdr-plugin.toml').read_text())
+    def test_root_manifest_declares_interactive_redpen_overlay(self):
+        manifest = tomllib.loads((ROOT / 'herdr-plugin.toml').read_text())
+        self.assertEqual(manifest['id'], 'interactive')
+        self.assertEqual(manifest['actions'][0]['id'], 'redpen')
         self.assertEqual(manifest['actions'][0]['contexts'], ['pane', 'selection'])
         self.assertEqual(manifest['panes'][0]['placement'], 'overlay')
-        self.assertIn('prefix+alt+r', (ROOT / 'redpen/README.md').read_text())
 
 
 if __name__ == '__main__':
