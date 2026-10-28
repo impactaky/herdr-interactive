@@ -42,11 +42,15 @@ description = "Ask an agent about lines on this pane"
 
 ### 複数の ask をまとめて送る
 
-入力枠で Enter の代わりに **Ctrl+A** を押すと、その ask を送らずにためて閉じる。別の場所（同じ pane でも別の pane でもよい）で ask を開くと、見出しに `ask (1 queued) → …` と件数が出る。そこで Enter を押すと、ためた分と今の1件を1つの文にまとめて送る。送り先は送るときに選んだ agent。
+入力枠で Enter の代わりに **Ctrl+A** を押すと、その ask を送らずにためて、同じ静止画面の範囲選択に戻る。上端に `1 queued · select the next lines …` と出るので、続けて次の範囲を選び、ひとことを書く。入力枠の見出しには `ask (1 queued) → …` と件数が出る。そこで Enter を押すと、ためた分と今の1件を1つの文にまとめて送る。送り先は送るときに選んだ agent。
 
-- Esc はそのとき書いていた1件だけを取り消し、ためた分は残す。
+別の pane の行も混ぜたいときは、選択画面を Esc で抜け（ためた分は残る）、その pane で ask を開き直す。
+
+- 入力枠の Esc はそのとき書いていた1件だけを取り消して閉じる。ためた分は残る。
 - Ctrl+X でためた分を全部捨てる（ためているときだけ案内に出る）。
 - ためられるのは 20 件まで。ためた分は `$XDG_RUNTIME_DIR/herdr-interactive/` に Herdr session ごとに置き、ログアウトや再起動で消える。
+
+![1件ためて選択画面に戻ったところ](docs/images/batch-select.png)
 
 ![2件をまとめて送る直前](docs/images/batch-popup.png)
 

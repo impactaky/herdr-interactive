@@ -184,7 +184,8 @@ def main():
         literal('\x1b[<0;82;6M\x1b[<0;82;6m')
         keys('Enter'); literal('このヒントは正しい？'); keys('C-a'); time.sleep(.6)
         sent = len(log.read_text().splitlines())
-        herdr('plugin', 'action', 'invoke', 'interactive.ask'); time.sleep(.6)
+        # Ctrl+A returns to the same frozen screen; pick the next line there.
+        capture('batch-select')
         literal('\x1b[<0;82;4M\x1b[<0;82;4m')
         keys('Enter'); literal('両方まとめて「まとめ:」で始めて1文で答えて。')
         capture('batch-popup')

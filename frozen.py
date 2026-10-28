@@ -310,18 +310,20 @@ def read_key(fd):
     return data.decode('ascii', errors='ignore')
 
 
-def choose(frame):
+def choose(frame, selection=None, status=''):
+    """Select rows; pass the previous selection back to keep its scroll position."""
     fd = sys.stdin.fileno()
     output = sys.stdout
     saved = termios.tcgetattr(fd)
-    selection = Selection(frame)
+    selection = selection or Selection(frame)
     notice = ''
+    banner = '\x1b[1;1H' + RESET + HEADING + status + RESET if status else ''
     try:
         tty.setraw(fd)
         output.write('\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1000h\x1b[?1002h\x1b[?1006h')
         while True:
             size = os.get_terminal_size(fd)
-            output.write(selection.render(size.columns, size.lines) + notice)
+            output.write(selection.render(size.columns, size.lines) + (notice or banner))
             notice = ''
             output.flush()
             result = selection.handle(read_key(fd))

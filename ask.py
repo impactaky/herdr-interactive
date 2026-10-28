@@ -324,7 +324,7 @@ def compose(host, store, screen, red, selection=None, queue=None):
                 notice = f'Queue is full ({QUEUE_LIMIT}); press Enter to send'
             else:
                 queue.save(queued + [dict(red=red, note=note)])
-                return
+                return 'queued'
         elif key == '\x18':
             queue.clear()
             queued, notice = [], 'Queue dropped'
@@ -346,13 +346,23 @@ def main():
             red = json.loads(path.read_text())
         finally:
             path.unlink(missing_ok=True)
-        selection = None
-        if 'frame' in red:
-            selection = choose(red.pop('frame'))
+        queue = Queue(host.env)
+        if 'frame' not in red:
+            curses.wrapper(lambda screen: compose(host, Store(host.env), screen, red, None, queue))
+            return
+        frame, selection = red.pop('frame'), None
+        # Ctrl+A returns here, so several ranges can be queued in one session.
+        while True:
+            count = len(queue.load())
+            status = f' {count} queued · select the next lines · Enter write · Esc leave (queue kept) ' if count else ''
+            selection = choose(frame, selection, status)
             if selection is None:
                 return
-            set_quote(red, selection.quote(), 'frozen')
-        curses.wrapper(lambda screen: compose(host, Store(host.env), screen, red, selection))
+            item, store = dict(red), Store(host.env)
+            set_quote(item, selection.quote(), 'frozen')
+            if curses.wrapper(lambda screen: compose(host, store, screen, item, selection, queue)) != 'queued':
+                return
+            selection.anchor = None
     else:
         raise AskError('Usage: run.sh open|compose')
 

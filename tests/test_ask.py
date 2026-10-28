@@ -167,7 +167,7 @@ class Ask(unittest.TestCase):
         red = rp.snapshot(self.host, {})
         path.write_text(json.dumps(red))
         self.host.env.update(HOME=str(self.base), XDG_STATE_HOME=str(self.base / 'state'),
-                             HERDR_ASK_SNAPSHOT_FILE=str(path))
+                             XDG_RUNTIME_DIR=str(self.base / 'run'), HERDR_ASK_SNAPSHOT_FILE=str(path))
         screen = Screen(['note', '\r'])
         with patch.object(rp, 'Host', return_value=self.host), patch.object(rp.sys, 'argv', ['ask.py', 'compose']), \
              patch.object(rp, 'choose', return_value=Mock(quote=lambda: '\x1b[31mchosen\x1b[0m', render=lambda *args: '')), \
@@ -182,11 +182,41 @@ class Ask(unittest.TestCase):
         self.assertEqual(saved['quote_origin'], 'frozen')
         self.assertNotIn('frame', saved)
 
+    def test_ctrl_a_returns_to_selection_and_next_enter_sends_both(self):
+        self.store.prepare()
+        path = self.store.root / 'snapshot-test.json'
+        path.write_text(json.dumps(rp.snapshot(self.host, {})))
+        self.host.env.update(HOME=str(self.base), XDG_STATE_HOME=str(self.base / 'state'),
+                             XDG_RUNTIME_DIR=str(self.base / 'run'), HERDR_ASK_SNAPSHOT_FILE=str(path))
+        picks = iter(['first line', 'second line'])
+        statuses = []
+
+        def choose(frame, selection, status):
+            statuses.append(status)
+            quote = next(picks)
+            return Mock(quote=lambda: quote, render=lambda *args: '', anchor=None)
+
+        screens = iter([Screen(['why?', '\x01']), Screen(['and this?', '\r'])])
+        with patch.object(rp, 'Host', return_value=self.host), patch.object(rp.sys, 'argv', ['ask.py', 'compose']), \
+             patch.object(rp, 'choose', side_effect=choose), \
+             patch.object(rp.curses, 'wrapper', side_effect=lambda draw: draw(next(screens))), \
+             patch.object(rp, 'popup_rect', return_value=(2, 8, 96, 6)), \
+             patch.object(rp.sys, 'stdout', new_callable=io.StringIO), \
+             patch.object(rp.curses, 'raw'), patch.object(rp.curses, 'nonl'):
+            rp.main()
+        self.assertEqual(statuses[0], '')
+        self.assertIn('1 queued', statuses[1])
+        prompts = [p['text'] for m, p in self.host.calls if m == 'agent.prompt']
+        self.assertEqual(len(prompts), 1)
+        self.assertIn('> first line\nwhy?', prompts[0])
+        self.assertIn('> second line\nand this?', prompts[0])
+        self.assertEqual([r['quote'] for r in self.records()], ['first line', 'second line'])
+
     def test_frozen_escape_consumes_snapshot_without_delivery_or_record(self):
         self.store.prepare()
         path = self.store.root / 'snapshot-test.json'
         path.write_text(json.dumps(rp.snapshot(self.host, {})))
-        self.host.env['HERDR_ASK_SNAPSHOT_FILE'] = str(path)
+        self.host.env.update(HERDR_ASK_SNAPSHOT_FILE=str(path), XDG_RUNTIME_DIR=str(self.base / 'run'))
         self.host.calls.clear()
         with patch.object(rp, 'Host', return_value=self.host), patch.object(rp.sys, 'argv', ['ask.py', 'compose']), \
              patch.object(rp, 'choose', return_value=None), patch.object(rp.curses, 'wrapper') as compose:
