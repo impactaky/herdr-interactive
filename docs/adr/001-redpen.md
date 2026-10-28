@@ -1,0 +1,39 @@
+# 赤の保存・文面・静止画面（確定）
+
+## 赤の保存・文面・配布（2026-10-27 / 28、確定）
+
+### 文脈
+
+任意 pane の画面上の指摘を、短い操作で agent に届け、後から振り返りたい。git diff や nvim のコードに限定した既存 plugin では対象を覆えない。
+
+### 決定
+
+1. 赤は送信しなかった操作も JSONL に貯める。ユーザー専用の XDG state directory に時刻・送り元・送り先・上限付き引用・切り詰め情報・ひとことを保存する。
+2. akapen の【赤ペン回答】とは別の短い【赤】を使う。画面の文字は指示として扱わない引用ブロックにし、別 pane からなら pane id と cwd を添える。
+3. public な独立 repository `herdr-interactive`（MIT）に置き、Herdr plugin として配布する。
+
+### 代替案
+
+送るだけでは振り返りができず、repository 内の記録は共有される恐れがある。【赤ペン回答】の流用は回答と指摘を混同する。reviewr / herdr-nvim の拡張は対象をそれぞれの UI に縛り、upstream 更新との競合も増やす。
+
+### 結果
+
+指摘は私有のログとして残り、agent は短い引用と補足で元画面を追える。独立した local plugin として更新できる。引用の上限外と画像は残らず、ログの共有・保持期間は利用者が管理する。
+
+## その場の色付き静止画面で選ぶ（2026-10-27、確定）
+
+### 文脈
+
+利用者の macOS Moshi → ssh → Herdr 0.9.5 の検収では、マウス選択・prefix なしキー・copy_on_select=false・copy mode のいずれでも selected_text が届かず、選択メニューにも action が出なかった。[#3380](https://github.com/herdrdev/herdr/issues/3380)、[#3353](https://github.com/herdrdev/herdr/issues/3353)、[#4599](https://github.com/herdrdev/herdr/issues/4599) と一致するとの導入前の調査結果を受けた。Ctrl+クリックも Moshi が右クリックへ変換し、link handler に届かなかった。context に座標はない。
+
+### 決定
+
+キー起動時の元 pane の色・位置・大きさ・scroll 位置を保った snapshot を overlay に描き、plugin 自身で選択する。文字色を保ち、選択は左端の印で示す。Enter でひとことへ進み、保存・文面の決定を維持する。selected_text が届いた場合の優先分岐は残す。利用者の config 本体は管理せず、README にキー設定例だけを置く。
+
+### 代替案
+
+Herdr の選択を待つ方式や Ctrl+クリックには実機で通る経路がない。単色の選択一覧や中央 popup への移動は、利用者が見ていた位置・色の手掛かりを失う。overlay は tab 全体だが pane rect と外枠の補正で同じ位置に描けたため、pane サイズの popup への妥協は不要だった。
+
+### 結果
+
+Herdr の選択引継ぎに依存せず、いつもの画面上で行を選べる。原画面の process は止めず、表示だけを固定する。plugin が ANSI 行・マウス・scrollback を扱う責任を持ち、将来 selected_text が修正されれば既存の優先分岐も使える。
