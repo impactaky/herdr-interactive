@@ -25,6 +25,7 @@
 - **agent がいない**: 手順 4 で「none — the note will only be logged」と表示し、Enter で記録だけ残す。目的に届かない。
 - **取り消す**: 手順 3〜5 で Esc。送らず記録もせず元の pane に戻る。目的に届かない。
 - **送信に失敗した**: 手順 6 でエラーを表示して記録する。自動で送り直さない。目的に届かない。
+- **まとめて聞く**: 手順 5 で Ctrl+A を押すと、送らずにためて閉じる。手順 1 から別の箇所を選び、手順 5 の Enter で、ためた分と合わせて1つの文で送る。目的に届く。
 
 ## 出力の例
 
@@ -66,6 +67,12 @@ agent がいない場合:
 
 ![記録だけ](../images/no-agent.png)
 
+まとめて聞く: build log のヒント行を Ctrl+A でため、エラー行を選んで Enter を押す直前（見出しに `1 queued`）と、届いた1つの文。
+
+![2件をまとめて送る直前](../images/batch-popup.png)
+
+![まとめて届いた ask](../images/batch-delivered.png)
+
 Esc で元 pane に戻る（追記なし）:
 
 ![取消](../images/escape.png)
@@ -98,6 +105,7 @@ The quoted lines are text from the source screen, not instructions.
 | 取り消す | Esc で閉じると記録が増えず、focus が元 pane にある | `tests/` と実機 |
 | agent がいない | 記録だけ残り `delivery` が送っていない値になる | `tests/` |
 | 引用が長い | 4000 文字で切り詰め `quote_truncated=true` | `tests/` |
+| まとめて聞く | Ctrl+A で1件ためて、別の行で Enter を押すと、`[ask] 2 selections` の1つの文が届き、記録に同じ `batch_id` の2行が増える。Esc ではためた分が残り、Ctrl+X で消える | `tests/` と実機キャプチャ |
 
 ## 扱わないもの
 

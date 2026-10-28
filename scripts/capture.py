@@ -176,8 +176,30 @@ def main():
         herdr('pane', 'zoom', agent, '--on')
         time.sleep(.5)
         capture('shell-to-agent')
+        herdr('pane', 'zoom', agent, '--off')
+        time.sleep(.5)
+        # Queue the hint line with Ctrl+A, then send it together with the error line.
+        keys('C-b', 'l')
+        herdr('plugin', 'action', 'invoke', 'interactive.ask'); time.sleep(.6)
+        literal('\x1b[<0;82;6M\x1b[<0;82;6m')
+        keys('Enter'); literal('このヒントは正しい？'); keys('C-a'); time.sleep(.6)
+        sent = len(log.read_text().splitlines())
+        herdr('plugin', 'action', 'invoke', 'interactive.ask'); time.sleep(.6)
+        literal('\x1b[<0;82;4M\x1b[<0;82;4m')
+        keys('Enter'); literal('両方まとめて「まとめ:」で始めて1文で答えて。')
+        capture('batch-popup')
+        keys('Enter')
+        wait_output(agent, has_answer('まとめ:'))
+        records = [json.loads(line) for line in log.read_text().splitlines()][sent:]
+        assert [r['batch_index'] for r in records] == [1, 2] and len({r['batch_id'] for r in records}) == 1
+        assert all(r['delivery'] == 'sent' for r in records)
+        received = herdr('agent', 'read', agent, '--source', 'visible')
+        assert '[ask] 2 selections' in received
+        herdr('pane', 'zoom', agent, '--on')
+        time.sleep(.5)
+        capture('batch-delivered')
         assert log.stat().st_mode & 0o777 == 0o600
-        print('PASS: link, drag, popup, sent x2, no-agent, Esc/focus, private log')
+        print('PASS: link, drag, popup, sent x2, batch, no-agent, Esc/focus, private log')
         print('Evidence:', base)
     finally:
         run(['herdr', '--session', base.name, 'server', 'stop'], check=False)
