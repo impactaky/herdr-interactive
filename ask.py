@@ -212,7 +212,7 @@ def compose(host, store, screen, red, selection=None):
             raise AskError('入力欄の場所がありません。画面を戻して選び直してください')
         destination = target['pane_id'] + ' ' + title(target) if target else 'なし — 記録だけ残します'
         rows = [notice or '【赤】→ ' + destination,
-                'Enter送信 Tab宛先 ^J改行 Esc取消']
+                'Enter送信  Ctrl+J改行  Tab宛先  Esc取消']
         rows += note.split('\n')
         # curses handles UTF-8 input; ANSI output keeps the original SGR colors.
         screen.refresh()

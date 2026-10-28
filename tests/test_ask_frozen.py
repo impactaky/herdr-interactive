@@ -185,6 +185,16 @@ class Frozen(unittest.TestCase):
                 text = frozen.plain(row.split('H', 1)[1])
                 self.assertLessEqual(sum(frozen.cell_width(c) for c in text), 12)
 
+    def test_popup_shows_cursor_after_note_for_ime(self):
+        rendered = frozen.popup_render((2, 3, 20, 6), ['heading', 'help', 'あいう'])
+        # Note is content row 3 -> screen row 3 + 3 + 1; after border and 6 cells.
+        self.assertTrue(rendered.endswith('\x1b[7;10H\x1b[?25h'))
+
+    def test_popup_cursor_follows_wrapped_tail(self):
+        rendered = frozen.popup_render((0, 0, 8, 6), ['heading', 'help', 'あいうえお'])
+        # Width 6 inside: 'あいう' then 'えお' on the next row.
+        self.assertTrue(rendered.endswith('\x1b[5;6H\x1b[?25h'))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

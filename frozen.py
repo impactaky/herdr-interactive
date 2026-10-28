@@ -262,7 +262,11 @@ def popup_render(rect, rows):
             used = sum(cell_width(c) for c in plain(clipped))
             line = '│' + clipped + ' ' * (width - 2 - used) + '│'
         output.append(f'\x1b[{y + index + 1};{x + 1}H' + RESET + line)
-    return ''.join(output) + '\x1b[?25l'
+    # Park a visible cursor after the note: terminal IMEs draw preedit text there.
+    row = min(len(content), height - 2)
+    used = sum(cell_width(c) for c in plain(crop(content[row - 1].expandtabs(4), width - 2))) if row else 0
+    column = x + 1 + min(used, width - 3)
+    return ''.join(output) + f'\x1b[{y + row + 1};{column + 1}H\x1b[?25h'
 
 
 def read_key(fd):
