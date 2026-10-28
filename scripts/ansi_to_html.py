@@ -6,8 +6,10 @@ import re
 import sys
 import unicodedata
 
-PALETTE = ['#000000', '#cd0000', '#00cd00', '#cdcd00', '#0000ee', '#cd00cd', '#00cdcd', '#e5e5e5',
-           '#7f7f7f', '#ff0000', '#00ff00', '#ffff00', '#5c5cff', '#ff00ff', '#00ffff', '#ffffff']
+# One Dark, matching Herdr's one-dark theme rather than raw xterm colors.
+PALETTE = ['#282c34', '#e06c75', '#98c379', '#e5c07b', '#61afef', '#c678dd', '#56b6c2', '#abb2bf',
+           '#5c6370', '#e06c75', '#98c379', '#e5c07b', '#61afef', '#c678dd', '#56b6c2', '#ffffff']
+FG = '#abb2bf'
 
 
 def color(index):
@@ -20,11 +22,39 @@ def color(index):
     return '#%02x%02x%02x' % ((8 + (index - 232) * 10,) * 3)
 
 
+BLOCKS = {'█': (0, 0, 10, 22), '▌': (0, 0, 5, 22), '▐': (5, 0, 5, 22), '▀': (0, 0, 10, 11), '▄': (0, 11, 10, 11)}
+
+
+def cell_art(char, front):
+    """Draw box-drawing and block glyphs to fill the cell, as terminals do.
+
+    A font glyph rarely spans the full line height, so borders would show gaps.
+    """
+    svg = '<svg viewBox="0 0 10 22" preserveAspectRatio="none">{}</svg>'
+    if char in BLOCKS:
+        x, y, w, h = BLOCKS[char]
+        return svg.format(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{front}"/>')
+    name = unicodedata.name(char, '')
+    if not name.startswith('BOX DRAWINGS') or 'DASH' in name:
+        return None
+    words = name.split()
+    ends = {'UP': (5, 0), 'DOWN': (5, 22), 'LEFT': (0, 11), 'RIGHT': (10, 11)}
+    sides = {w for w in words if w in ends}
+    if 'VERTICAL' in words: sides |= {'UP', 'DOWN'}
+    if 'HORIZONTAL' in words: sides |= {'LEFT', 'RIGHT'}
+    if not sides:
+        return None
+    width = 2.4 if 'HEAVY' in words or 'DOUBLE' in words else 1.2
+    lines = ''.join(f'<line x1="5" y1="11" x2="{ends[s][0]}" y2="{ends[s][1]}"/>' for s in sorted(sides))
+    return svg.format(f'<g stroke="{front}" stroke-width="{width}" stroke-linecap="square" '
+                      f'vector-effect="non-scaling-stroke">{lines}</g>')
+
+
 def convert(text):
     # Refuse a capture with personal paths, email or common token prefixes.
     if re.search(r'/home/|/Users/|[\w.+-]+@[\w.-]+|(?:sk-|ghp_|github_pat_)[A-Za-z0-9_]{12,}', text):
         raise ValueError('Capture contains a private path, account or possible token; recapture it')
-    fg, bg, bold, reverse = '#d8dee9', '#282c34', False, False
+    fg, bg, bold, reverse = FG, '#282c34', False, False
     output = []
     for token in re.split(r'(\x1b\[[0-?]*[ -/]*[@-~])', text):
         if token.startswith('\x1b['):
@@ -35,10 +65,10 @@ def convert(text):
             while i < len(codes):
                 code = codes[i]
                 if code == 0:
-                    fg, bg, bold, reverse = '#d8dee9', '#282c34', False, False
+                    fg, bg, bold, reverse = FG, '#282c34', False, False
                 elif code in (1, 22): bold = code == 1
                 elif code in (7, 27): reverse = code == 7
-                elif code == 39: fg = '#d8dee9'
+                elif code == 39: fg = FG
                 elif code == 49: bg = '#282c34'
                 elif 30 <= code <= 37: fg = color(code - 30)
                 elif 40 <= code <= 47: bg = color(code - 40)
@@ -62,9 +92,11 @@ def convert(text):
                 continue
             width = 0 if unicodedata.combining(char) else 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
             front, back = (bg, fg) if reverse else (fg, bg)
-            output.append(f'<span style="width:{width}ch;color:{front};background:{back};font-weight:{700 if bold else 400}">{html.escape(char)}</span>')
+            art = cell_art(char, front)
+            body = art if art else html.escape(char)
+            output.append(f'<span style="width:{width}ch;color:{front};background:{back};font-weight:{700 if bold else 400}">{body}</span>')
     return '''<!doctype html><meta charset="utf-8"><title>ask capture</title>
-<style>body{margin:0;background:#282c34;color:#d8dee9}pre{margin:0;padding:12px;font:16px/22px "Noto Sans Mono CJK JP",monospace;white-space:pre}span{display:inline-block;text-align:left;height:22px;vertical-align:top}</style><pre>''' + ''.join(output) + '</pre>'
+<style>body{margin:0;background:#282c34;color:#abb2bf}pre{margin:0;padding:12px;font:16px/22px "PragmataPro Mono","PragmataPro","Noto Sans Mono CJK JP",monospace;white-space:pre}span{display:inline-block;text-align:left;height:22px;vertical-align:top}svg{display:block;width:100%;height:100%}svg line{vector-effect:non-scaling-stroke}</style><pre>''' + ''.join(output) + '</pre>'
 
 
 if __name__ == '__main__':

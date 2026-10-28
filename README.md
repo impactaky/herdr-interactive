@@ -170,9 +170,11 @@ The tests never connect to a real Herdr. They cover quoting and limits, destinat
 
 ```bash
 python3 scripts/capture.py
+# Capture with your own theme and sidebar settings
+python3 scripts/capture.py --herdr-config ~/.config/herdr/config.toml
 ```
 
-Requires Herdr 0.9.5, tmux, agent-browser (Chromium), a logged-in Codex, and a Japanese font (Noto Sans Mono CJK JP).
+Requires Herdr 0.9.5, tmux, agent-browser (Chromium) and a logged-in Codex. Text is drawn in PragmataPro if installed, otherwise Noto Sans Mono CJK JP. Colors use the One Dark palette, and box-drawing and block characters fill their cells as in a terminal.
 
 The script starts a disposable Herdr session (120×36) inside a dedicated tmux and a temporary XDG config / state, and links this repository. Your normal session's config and plugins are untouched. It walks through these scenes and captures them, then stops Herdr, tmux and the browser:
 

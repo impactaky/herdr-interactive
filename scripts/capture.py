@@ -17,7 +17,7 @@ from ansi_to_html import convert
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main():
+def main(herdr_config=None):
     base = Path(tempfile.mkdtemp(prefix='interactive-capture-'))
     env = dict(os.environ)
     codex = shutil.which('codex')
@@ -29,7 +29,11 @@ def main():
     env.update(XDG_CONFIG_HOME=str(base / 'config'), XDG_STATE_HOME=str(base / 'state'),
                HERDR_CONFIG_PATH=str(base / 'config.toml'), TERM='xterm-256color',
                COLORTERM='truecolor', AGENT_BROWSER_SESSION=base.name)
-    (base / 'config.toml').write_text('onboarding = false\n[[keys.command]]\nkey = "prefix+shift+r"\ntype = "plugin_action"\ncommand = "interactive.ask"\n')
+    # Start from your own Herdr config (theme, sidebar) so captures match your screen.
+    config = Path(herdr_config).read_text() if herdr_config else 'onboarding = false\n'
+    if 'interactive.ask' not in config:
+        config += '\n[[keys.command]]\nkey = "prefix+shift+r"\ntype = "plugin_action"\ncommand = "interactive.ask"\n'
+    (base / 'config.toml').write_text(config)
     (base / 'tmux.conf').write_text('set -g default-terminal "tmux-256color"\nset -as terminal-features ",xterm-256color:RGB"\nset -g status off\n')
 
     def run(args, check=True):
@@ -209,5 +213,8 @@ def main():
 
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--herdr-config', help='your Herdr config.toml, to capture with your theme and sidebar')
     (ROOT / 'docs/images').mkdir(parents=True, exist_ok=True)
-    main()
+    main(parser.parse_args().herdr_config)

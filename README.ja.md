@@ -170,9 +170,11 @@ python3 -m unittest discover -s tests
 
 ```bash
 python3 scripts/capture.py
+# 自分の theme や sidebar の設定で撮る
+python3 scripts/capture.py --herdr-config ~/.config/herdr/config.toml
 ```
 
-Herdr 0.9.5、tmux、agent-browser（Chromium）、ログイン済みの Codex、日本語フォント（Noto Sans Mono CJK JP）が必要です。
+Herdr 0.9.5、tmux、agent-browser（Chromium）、ログイン済みの Codex が必要です。文字は PragmataPro があればそれで、なければ Noto Sans Mono CJK JP で描きます。色は One Dark の配色で、罫線とブロック文字は端末と同じく升目いっぱいに描きます。
 
 使い捨ての Herdr session（120×36）を専用の tmux と一時的な XDG config / state の中で起動し、この repository を link します。普段の session の設定と plugin には触りません。次の場面を順に通して撮り、終わったら Herdr・tmux・browser を止めます。
 
