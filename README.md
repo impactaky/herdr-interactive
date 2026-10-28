@@ -1,10 +1,12 @@
-# herdr-interactive — Redpen
+# herdr-interactive — ask
 
 Herdr の任意 pane（Claude Code / Codex / shell / ログ / TUI）に、その場の色付き静止画面を重ねて行を選び、ひとこと添えた【赤】を agent に送る plugin。Python 3 の標準ライブラリだけを使う。【赤】は agent へ送る文、静止画面は表示だけを固定した写し、ひとことは引用に添える質問、記録は後から振り返るための JSONL を指す。
 
 ![元の画面を見ながらひとことを書く](docs/images/shell-popup.png)
 
-[ユースケース一覧](docs/usecases/README.md) · [判断の記録](docs/adr/001-redpen.md)
+見本では build log のエラー2行を指して型が決まる場所を聞く。横の agent の出力も見えたまま質問できる。
+
+[ユースケース一覧](docs/usecases/README.md) · [判断の記録](docs/adr/001-ask.md)
 
 ## 登録と設定
 
@@ -23,7 +25,7 @@ herdr plugin link /absolute/path/to/herdr-interactive
 [[keys.command]]
 key = "prefix+shift+r"
 type = "plugin_action"
-command = "interactive.redpen"
+command = "interactive.ask"
 description = "その場の画面に赤を入れる"
 ```
 
@@ -32,9 +34,9 @@ description = "その場の画面に赤を入れる"
 ## 使い方
 
 1. 気になる pane を必要な位置まで scroll し、`prefix+shift+r` を押す。
-2. **その pane と同じ位置・大きさ・scroll 位置の色付き静止画面**が現れる。tab 全体の overlay の中で、元 pane の場所だけに snapshot を描き、他の pane の場所は空白にする。元の process は動作を続けるが、選択中の snapshot は更新しない。
-3. クリックで1行、ドラッグで複数行を選ぶ。キーボードは j/k・↑↓ で行移動、V で範囲の開始・解除、PageUp/PageDown で1画面分移動する。上端で k/↑、またはマウスホイールでも、起動時に取得した scrollback を遡れる。左端の `▌` がカーソル行・範囲を示す。左端が overlay 自身の枠に隠れる pane では選択行を反転する。元の色指定は保持する。
-4. Enter で小さいひとこと入力枠へ進む。静止画面の上で、選択範囲に重ならない上側または下側に描く（最大6行、画面の1/3以下）。元の画面と印を保持し、余裕があれば間に1行残す。枠の場所が足りない範囲は選び直す。何も選ばなければカーソル行だけを引用する。初期カーソルは起動時の最上段。
+2. **その pane と同じ位置・大きさ・scroll 位置の色付き静止画面**が現れる。tab 内のすべての pane を、起動時の位置・色・scroll 位置で固定して描く。枠とタイトルも元の配置に合わせ、選べるのは起動した pane の行だけ。元の process は動作を続けるが、選択中の snapshot は更新しない。
+3. クリックで1行、ドラッグで複数行を選ぶ。キーボードは j/k・↑↓ で行移動、V で範囲の開始・解除、PageUp/PageDown で1画面分移動する。上端で k/↑、またはマウスホイールでも、起動時に取得した scrollback を遡れる。選択行は薄い背景色と左端の `▌` で示す。文字の前景色は元のまま保持する。
+4. Enter で小さいひとこと入力枠へ進む。静止画面の上で、選択範囲に重ならない上側または下側に描く（最大6行、画面の1/3以下）。元の画面と選択背景を保持し、余裕があれば間に1行残す。入力枠の幅は起動元 pane に収め、他の pane の内容を隠さない。枠の場所が足りない範囲は選び直す。何も選ばなければカーソル行だけを引用する。初期カーソルは起動時の最上段。
 5. ひとことを書き、Enter で送信・記録する。Ctrl+J は改行、Backspace は末尾削除、Tab は送り先切替。
 6. overlay が閉じ、元の pane に戻る。選択中・入力中とも Esc は送信も記録もせず閉じる。
 
@@ -59,7 +61,7 @@ Herdr が将来 `HERDR_PLUGIN_CONTEXT_JSON.selected_text` を渡せるように�
 
 ## 記録
 
-`${XDG_STATE_HOME:-$HOME/.local/state}/herdr-interactive/redpen.jsonl` に送信操作ごとに一行追記する。共有しないユーザー専用の state directory を使う。専用 directory は自分所有の 0700、ファイルは自分所有の 0600 の通常ファイルであることを検査し、symlink や複数 hardlink を拒否する。保存先を開けなければ送らない。追記は flock、flush、fsync を行う。
+`${XDG_STATE_HOME:-$HOME/.local/state}/herdr-interactive/ask.jsonl` に送信操作ごとに一行追記する。共有しないユーザー専用の state directory を使う。専用 directory は自分所有の 0700、ファイルは自分所有の 0600 の通常ファイルであることを検査し、symlink や複数 hardlink を拒否する。保存先を開けなければ送らない。追記は flock、flush、fsync を行う。
 
 各行は UTF-8 JSON。
 
@@ -81,10 +83,10 @@ Herdr が将来 `HERDR_PLUGIN_CONTEXT_JSON.selected_text` を渡せるように�
 
 インストール済み `herdr --skill` / `--help` / `api schema --json`（protocol 22）と実機で確認した経路を使う。
 
-- 元 pane の `pane.get` で scroll、`pane.layout` で tab area と pane rect を得る。`pane.read` の `source=visible, format=ansi, strip_ansi=false` で起動時の表示を取得する。scrollback があれば `source=recent` も ANSI で取得し、visible の前後に保持する。元 pane に `pane.scroll` を送らない。
+- tab 内の各 pane の `pane.get` で scroll、`pane.layout` で tab area と pane rect を得る。`pane.read` の `source=visible, format=ansi, strip_ansi=false` で起動時の表示を取得する。他の pane はその可視画面を固定し、起動元 pane は scrollback があれば `source=recent` も ANSI で取得し、visible の前後に保持する。元 pane に `pane.scroll` を送らない。
 - `plugin.pane.open` を `placement=overlay` で開く。`target_pane_id` は overlay で拒否されるため指定しない。active pane からの起動を前提とする。
 - overlay は tab 全体の pane。実機では layout area 94×35 に対して端末は91×33だった（外枠2列・2行と scrollbar 1列）。この inset を補正して元 pane の **内容の画面座標**を一致させる。scrollbar 無効の横幅差2列も扱う。overlay の外枠は Herdr のもので、元 pane に相当する左端に選択印を描く。入力時も同じ overlay を使い、小さい枠だけを上描きする。選択状態を保持するので、別の host popup に focus を移す必要がない。
-- snapshot の SGR を保持し、色を変換せず再描画する。SGR 以外の escape（カーソル操作・OSC 等）は再実行しない。行の切り出しは CJK のセル幅・結合文字を考慮する。
+- snapshot の SGR を保持し、文字の前景色を変換せず再描画する。選択行の背景だけを上書きし、SGR の reset 後にも再適用する。SGR 以外の escape（カーソル操作・OSC 等）は再実行しない。行の切り出しは CJK のセル幅・結合文字を考慮する。
 - plugin 自身が mouse reporting（1000/1002/1006）を要求し、Herdr から転送されたクリック・ドラッグ・wheel を受ける。選択は行単位で、元の terminal selection API への問い合わせは不要。
 - 大きな scrollback を環境変数に入れず、私有 state directory の0600の一時 snapshot JSONを渡す。overlay が読み込むと直ちに削除する。送信失敗・Esc でも全文を JSONL に保存しない。起動前に process が停止した場合は `snapshot-*.json` が残ることがある。
 
@@ -94,7 +96,7 @@ Herdr が将来 `HERDR_PLUGIN_CONTEXT_JSON.selected_text` を渡せるように�
 
 Herdr 本体の選択が plugin に届かない問題については [#3380](https://github.com/herdrdev/herdr/issues/3380)、[#3353](https://github.com/herdrdev/herdr/issues/3353)、[#4599](https://github.com/herdrdev/herdr/issues/4599) が関連する（元の実機調査で参照した問題）。本 plugin は独自の行選択で回避する。
 
-画像と会話 transcript は扱わない。選択は行単位で、列の一部分だけの選択はない。scrollback は host が起動時に返した範囲までで、alternate screen の TUI は host に過去の行がない場合がある。visible と history は別々の API 読み取りなので、更新中の境界は原子的な取得ではない。選択中に端末サイズや pane 配置を変えた場合は閉じて開き直す。背景 pane を指定する起動は想定しない。
+画像と会話 transcript は扱わない。選択は行単位で、列の一部分だけの選択はない。scrollback は host が起動時に返した範囲までで、alternate screen の TUI は host に過去の行がない場合がある。各 pane の visible と起動元の history は別々の API 読み取りなので、更新中の画面の取得は tab 全体で原子的ではない。選択中に端末サイズや pane 配置を変えた場合は閉じて開き直す。背景 pane を指定する起動は想定しない。
 
 入力は末尾への追加・削除で、カーソル編集はない。Enter と Ctrl+J の区別には CR/LF を区別できる端末が必要。blocked agent への入力が Herdr に拒否された場合はエラーになる。
 
@@ -122,7 +124,7 @@ python3 -m unittest discover -s tests
 ## jq で記録を見る
 
 ```bash
-log="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-interactive/redpen.jsonl"
+log="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-interactive/ask.jsonl"
 jq -c '{timestamp, source, destination, quote, note, delivery}' "$log"
 # 実際の pane ID を1行目から取り、同じ送り元だけを表示
 source_pane=$(jq -r '.source.pane_id' "$log" | head -n 1)
@@ -138,6 +140,6 @@ Herdr 0.9.5、tmux、agent-browser（Chromium）、Codex（ログイン済み）
 python3 scripts/capture.py
 ```
 
-120×36 の使い捨て Herdr session を専用 tmux socket と一時 XDG config/state で作り、root manifest を link する。SGR マウス入力でドラッグし、実物 Codex に短い確認を2回だけ送る。通常 session の設定と plugin は変更しない。`finally` で専用 Herdr、tmux、browser を止める。途中の失敗も終了対象になる。
+120×36 の使い捨て Herdr session を専用 tmux socket と一時 XDG config/state で作り、root manifest を link する。SGR マウス入力でドラッグし、実物 Codex を短い Rust build log の見本付きで起動する。その出力のエラー2行を選んで「これどこで型が決まってる？」と聞き、shell のエラーについても1回聞く。質問2回の引用・説明の返答を撮影する。受信画面だけは読みやすく一時的に zoom し、選択・入力画面は2 pane のまま撮る。通常 session の設定と plugin は変更しない。`finally` で専用 Herdr、tmux、browser を止める。途中の失敗も終了対象になる。
 
 `tmux capture-pane -e` の ANSI → 標準ライブラリの `scripts/ansi_to_html.py` → agent-browser の PNG。各文字を端末の1セルまたは2セル幅で配置して日本語の列を揃える。HTML/ANSI・記録・agent read は表示された一時 directory に残り、PNG は `docs/images/` に上書きされる。保存前に個人 path・メール・代表的 token 形式を検査し、該当すると停止する。公開前には画像も目視確認する。これは実機 Herdr の描画のキャプチャであり、macOS の物理マウスや IME の検収を代行するものではない。

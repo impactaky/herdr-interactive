@@ -13,7 +13,7 @@ from unittest.mock import patch, Mock
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('redpen', ROOT / 'redpen.py')
+spec = importlib.util.spec_from_file_location('ask', ROOT / 'ask.py')
 rp = importlib.util.module_from_spec(spec)
 sys.path.insert(0, str(ROOT))
 spec.loader.exec_module(rp)
@@ -50,7 +50,7 @@ class FakeHost:
         if method == 'agent.get':
             return {'agent': self.live}
         if method == 'agent.prompt' and self.fail:
-            raise rp.RedpenError('synthetic delivery failure')
+            raise rp.AskError('synthetic delivery failure')
         if method not in ('agent.prompt', 'plugin.pane.open'):
             raise AssertionError(method)
         return {'type': 'ok'}
@@ -73,7 +73,7 @@ class Screen:
         return next(self.keys)
 
 
-class Redpen(unittest.TestCase):
+class Ask(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -133,9 +133,29 @@ class Redpen(unittest.TestCase):
         params = self.host.calls[-1][1]
         self.assertEqual(params['placement'], 'overlay')
         self.assertNotIn('target_pane_id', params)
-        path = Path(params['env']['HERDR_REDPEN_SNAPSHOT_FILE'])
+        path = Path(params['env']['HERDR_ASK_SNAPSHOT_FILE'])
         self.assertEqual(json.loads(path.read_text()), red)
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_snapshot_freezes_other_panes_at_their_visible_scroll_position(self):
+        call = self.host.call
+        def two_panes(method, **params):
+            if method == 'pane.layout':
+                result = call(method, **params)
+                result['layout']['panes'].append(dict(pane_id='other', rect=dict(x=70, y=2, width=30, height=4)))
+                return result
+            if params.get('pane_id') == 'other':
+                if method == 'pane.get':
+                    return {'pane': dict(pane_id='other', label='log', scroll={'offset_from_bottom': 10})}
+                if method == 'pane.read':
+                    self.assertEqual(params['source'], 'visible')
+                    return {'read': {'text': '\x1b[32mscrolled peer\x1b[0m'}}
+            return call(method, **params)
+        with patch.object(self.host, 'call', side_effect=two_panes):
+            frame = rp.snapshot(self.host, {})['frame']
+        self.assertEqual(frame['peers'][0]['rows'], ['\x1b[32mscrolled peer\x1b[0m'])
+        self.assertEqual(frame['peers'][0]['scroll']['offset_from_bottom'], 10)
+        self.assertEqual(frame['peers'][0]['title'], 'log')
 
     def test_frozen_main_consumes_snapshot_and_logs_only_selected_plain_text(self):
         self.store.prepare()
@@ -143,9 +163,9 @@ class Redpen(unittest.TestCase):
         red = rp.snapshot(self.host, {})
         path.write_text(json.dumps(red))
         self.host.env.update(HOME=str(self.base), XDG_STATE_HOME=str(self.base / 'state'),
-                             HERDR_REDPEN_SNAPSHOT_FILE=str(path))
+                             HERDR_ASK_SNAPSHOT_FILE=str(path))
         screen = Screen(['note', '\r'])
-        with patch.object(rp, 'Host', return_value=self.host), patch.object(rp.sys, 'argv', ['redpen.py', 'compose']), \
+        with patch.object(rp, 'Host', return_value=self.host), patch.object(rp.sys, 'argv', ['ask.py', 'compose']), \
              patch.object(rp, 'choose', return_value=Mock(quote=lambda: '\x1b[31mchosen\x1b[0m', render=lambda *args: '')), \
              patch.object(rp.curses, 'wrapper', side_effect=lambda draw: draw(screen)), \
              patch.object(rp, 'popup_rect', return_value=(2, 8, 96, 6)), \
@@ -162,9 +182,9 @@ class Redpen(unittest.TestCase):
         self.store.prepare()
         path = self.store.root / 'snapshot-test.json'
         path.write_text(json.dumps(rp.snapshot(self.host, {})))
-        self.host.env['HERDR_REDPEN_SNAPSHOT_FILE'] = str(path)
+        self.host.env['HERDR_ASK_SNAPSHOT_FILE'] = str(path)
         self.host.calls.clear()
-        with patch.object(rp, 'Host', return_value=self.host), patch.object(rp.sys, 'argv', ['redpen.py', 'compose']), \
+        with patch.object(rp, 'Host', return_value=self.host), patch.object(rp.sys, 'argv', ['ask.py', 'compose']), \
              patch.object(rp, 'choose', return_value=None), patch.object(rp.curses, 'wrapper') as compose:
             rp.main()
         self.assertFalse(path.exists())
@@ -183,7 +203,7 @@ class Redpen(unittest.TestCase):
         rp.submit(self.host, self.store, self.red, A, 'note\nsecond')
         rp.submit(self.host, self.store, self.red, None, 'record only')
         self.host.fail = True
-        with self.assertRaises(rp.RedpenError):
+        with self.assertRaises(rp.AskError):
             rp.submit(self.host, self.store, self.red, A, 'failed')
         records = self.records()
         self.assertEqual([r['delivery'] for r in records], ['sent', 'not_sent', 'failed_or_unknown'])
@@ -191,21 +211,21 @@ class Redpen(unittest.TestCase):
         self.assertIsNone(records[1]['destination'])
         self.assertEqual(records[0]['note'], 'note\nsecond')
         self.assertIn('+00:00', records[0]['timestamp'])
-        self.assertEqual(self.store.path.relative_to(self.base / 'state').as_posix(), 'herdr-interactive/redpen.jsonl')
+        self.assertEqual(self.store.path.relative_to(self.base / 'state').as_posix(), 'herdr-interactive/ask.jsonl')
         self.assertEqual(self.store.root.stat().st_mode & 0o777, 0o700)
         self.assertEqual(self.store.path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(len([m for m, _ in self.host.calls if m == 'agent.prompt']), 2)
 
     def test_destination_replaced_does_not_receive_prompt(self):
         self.host.live = dict(A, agent_session={'value': 'replacement'})
-        with self.assertRaises(rp.RedpenError):
+        with self.assertRaises(rp.AskError):
             rp.submit(self.host, self.store, self.red, A, 'note')
         self.assertFalse(any(m == 'agent.prompt' for m, _ in self.host.calls))
         self.assertEqual(self.records()[0]['delivery'], 'failed_or_unknown')
 
     def test_unsafe_storage_prevents_delivery(self):
         self.store.root.mkdir(parents=True, mode=0o755)
-        with self.assertRaises(rp.RedpenError):
+        with self.assertRaises(rp.AskError):
             rp.submit(self.host, self.store, self.red, A, 'note')
         self.assertEqual(self.host.calls, [])
         self.store.root.chmod(0o700)
@@ -215,7 +235,7 @@ class Redpen(unittest.TestCase):
         with self.assertRaises(OSError):
             rp.submit(self.host, self.store, self.red, A, 'note')
         self.assertEqual(other.read_text(), 'untouched')
-        with self.assertRaises(rp.RedpenError):
+        with self.assertRaises(rp.AskError):
             rp.Store(dict(HOME='/tmp', XDG_STATE_HOME='relative'))
 
     def test_ui_enter_multiline_backspace_tab_and_escape(self):
@@ -249,12 +269,12 @@ class Redpen(unittest.TestCase):
         self.assertFalse(any(m == 'agent.prompt' for m, _ in self.host.calls))
 
     def test_transport_uses_only_inherited_socket_and_json_lines(self):
-        with self.assertRaises(rp.RedpenError):
+        with self.assertRaises(rp.AskError):
             rp.Host({'HERDR_ENV': '1'})
         with patch.object(rp.socket, 'socket') as ctor:
             client = ctor.return_value.__enter__.return_value
             stream = client.makefile.return_value.__enter__.return_value
-            stream.readline.return_value = b'{"id":"redpen","result":{"type":"ok"}}\n'
+            stream.readline.return_value = b'{"id":"ask","result":{"type":"ok"}}\n'
             host = rp.Host({'HERDR_ENV': '1', 'HERDR_SOCKET_PATH': '/synthetic/socket'})
             self.assertEqual(host.call('agent.prompt', target=A['pane_id'], text='a\nb'), {'type': 'ok'})
             client.connect.assert_called_once_with('/synthetic/socket')
@@ -262,13 +282,13 @@ class Redpen(unittest.TestCase):
             self.assertEqual(data.count(b'\n'), 1)
             self.assertEqual(json.loads(data)['params']['text'], 'a\nb')
             stream.readline.return_value = b'{"error":{"code":"agent_blocked"}}\n'
-            with self.assertRaisesRegex(rp.RedpenError, 'agent_blocked'):
+            with self.assertRaisesRegex(rp.AskError, 'agent_blocked'):
                 host.call('agent.prompt', target=A['pane_id'], text='note')
 
-    def test_root_manifest_declares_interactive_redpen_overlay(self):
+    def test_root_manifest_declares_interactive_ask_overlay(self):
         manifest = tomllib.loads((ROOT / 'herdr-plugin.toml').read_text())
         self.assertEqual(manifest['id'], 'interactive')
-        self.assertEqual(manifest['actions'][0]['id'], 'redpen')
+        self.assertEqual(manifest['actions'][0]['id'], 'ask')
         self.assertEqual(manifest['actions'][0]['contexts'], ['pane', 'selection'])
         self.assertEqual(manifest['panes'][0]['placement'], 'overlay')
 

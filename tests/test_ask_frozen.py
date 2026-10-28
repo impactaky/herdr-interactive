@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch, Mock
 
 sys.dont_write_bytecode = True
-spec = importlib.util.spec_from_file_location('redpen_frozen', Path(__file__).resolve().parents[1] / 'frozen.py')
+spec = importlib.util.spec_from_file_location('ask_frozen', Path(__file__).resolve().parents[1] / 'frozen.py')
 frozen = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(frozen)
 
@@ -38,9 +38,9 @@ class Frozen(unittest.TestCase):
     def test_render_matches_pane_content_coordinates_and_colors(self):
         selection = frozen.Selection(self.frame())
         output = selection.render(100, 30)
-        self.assertIn('\x1b[5;12H\x1b[31mred', output)
+        self.assertIn('\x1b[5;12H' + frozen.SELECTED_BG + '\x1b[31m' + frozen.SELECTED_BG + 'red', output)
         self.assertIn('\x1b[6;12H\x1b[31m日本語', output)
-        self.assertIn('\x1b[5;11H\x1b[0m▌', output)
+        self.assertIn('\x1b[5;11H' + frozen.BORDER + '▌', output)
         # A source snapshot can never move the cursor or set OSC clipboard.
         self.assertEqual(len(re.findall(r'\x1b\[\d+;\d+H', output)), 8)
 
@@ -49,7 +49,7 @@ class Frozen(unittest.TestCase):
                      area=dict(width=22, height=4))
         selection = frozen.Selection(frame)
         output = selection.render(20, 2)
-        self.assertIn('\x1b[1;11Hred', output)
+        self.assertIn('\x1b[1;11H' + frozen.SELECTED_BG + 'red', output)
         self.assertIn('\x1b[2;11Hblue', output)
         selection.handle('\x1b[<0;11;2M')
         selection.handle('\x1b[<0;11;2m')
@@ -60,14 +60,16 @@ class Frozen(unittest.TestCase):
                      area=dict(width=22, height=4))
         selection = frozen.Selection(frame)
         output = selection.render(19, 2)
-        self.assertIn('\x1b[1;11Hcolored', output)
+        self.assertIn('\x1b[1;11H' + frozen.SELECTED_BG + 'colored', output)
         self.assertIn('\x1b[2;11Hlast', output)
 
-    def test_leftmost_pane_uses_reverse_without_replacing_source_characters(self):
+    def test_selected_background_preserves_foreground_and_source_characters(self):
         frame = dict(rows=['\x1b[31mred\x1b[0m', 'blue'], top=0,
                      rect=dict(x=0, y=0, width=22, height=4), area=dict(width=22, height=4))
         output = frozen.Selection(frame).render(19, 2)
-        self.assertIn('\x1b[1;1H\x1b[7m\x1b[31m\x1b[7mred', output)
+        self.assertIn('\x1b[1;1H' + frozen.SELECTED_BG + '\x1b[31m' + frozen.SELECTED_BG + 'red', output)
+        self.assertNotIn('\x1b[7m', output)
+        self.assertIn(frozen.RESET + frozen.SELECTED_BG, output)
         self.assertIn('\x1b[2;1Hblue', output)
 
     def test_enter_defaults_to_cursor_line_and_v_keyboard_selects_plain_range(self):
@@ -124,6 +126,23 @@ class Frozen(unittest.TestCase):
         selection.handle('\x1b[<0;2;1M')
         selection.handle('\x1b[<0;2;1m')
         self.assertEqual(selection.quote(), 'AB赤D')
+
+    def test_non_source_pane_keeps_visible_rows_colors_and_position(self):
+        frame = self.frame()
+        frame['peers'] = [dict(rows=['\x1b[32mother pane\x1b[0m', 'scrolled line'], top=0,
+                               rect=dict(x=40, y=3, width=20, height=4), title='build log')]
+        selection = frozen.Selection(frame)
+        output = selection.render(100, 30)
+        self.assertIn('\x1b[5;42H\x1b[32mother pane', output)
+        self.assertIn('\x1b[6;42Hscrolled line', output)
+        self.assertIn('build log', output)
+        selection.handle('\x1b[<0;43;6M')
+        self.assertEqual(selection.quote(), 'red')
+        x, y, width, height = frozen.popup_rect(selection, 100, 30)
+        self.assertLessEqual(x + width, frame['rect']['x'] + frame['rect']['width'])
+        selection.handle('k')
+        output = selection.render(100, 30)
+        self.assertIn('\x1b[6;42Hscrolled line', output)
 
     def test_popup_avoids_selection_above_and_below_and_limits_height(self):
         frame = dict(rows=['line'] * 34, top=0,

@@ -8,6 +8,8 @@ import tty
 import unicodedata
 
 RESET = '\x1b[0m'
+SELECTED_BG = '\x1b[48;2;55;65;81m'
+BORDER = '\x1b[38;2;137;180;250m'
 # pane.read emits SGR and CRLF. Ignore other terminal commands (including OSC
 # hyperlinks) rather than replaying commands from the source application.
 ESCAPE = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\](?:[^\x07\x1b]|\x1b(?!\\))*(?:\x07|\x1b\\)|[()][A-Za-z0-9]|.)')
@@ -146,50 +148,62 @@ class Selection:
                 self.dragging = False
 
     def render(self, columns, lines):
-        rect, area = self.frame['rect'], self.frame['area']
+        area = self.frame['area']
         # Herdr gives overlay terminals the tab's inner area: its own border
         # consumes one cell on each side. Translate layout coordinates back
         # through that inset, so source content stays in the same screen cells.
         horizontal = area['width'] - columns
         vertical = area['height'] - lines
         if horizontal not in (0, 2, 3) or vertical not in (0, 2):
-            raise ValueError('Terminal size changed; restore size and reopen Redpen')
+            raise ValueError('Terminal size changed; restore size and reopen ask')
         inset_x, inset_y = int(horizontal > 0), int(vertical > 0)
         gutter = max(0, horizontal - 2)  # Herdr's optional scrollbar column.
-        x, y = rect['x'] - inset_x, rect['y'] - inset_y
-        width, height = rect['width'], rect['height']
-        if (width < 3 or height < 3 or x + 1 < 0 or y + 1 < 0
-                or x + width - 2 - gutter >= columns or y + height - 2 >= lines):
-            raise ValueError('Source pane does not fit; restore terminal size and reopen Redpen')
-        self.height = height - 2 * self.border
         self.inset = (inset_x, inset_y)
         output = [RESET, '\x1b[2J']
 
         def at(row, column, text):
             if 0 <= row < lines and 0 <= column < columns:
-                output.append(f'\x1b[{row + 1};{column + 1}H' + text)
+                output.append(f'\x1b[{row + 1};{column + 1}H' + crop(text, columns - column))
 
-        label = ' Redpen: Enter 次へ / V 範囲 / j,k ↑↓ / PgUp,Dn / Esc '
-        at(y, x, '┌' + crop(label, width - 2) + '┐')
         start, end = self.bounds()
-        for index in range(self.height):
-            row = self.top + index
-            mark = '▌' if start <= row <= end else '│'
-            if self.border:
-                at(y + index + 1, x, RESET + mark)
-            content = self.rows[row] if row < len(self.rows) else ''
-            if (x < 0 or not self.border) and start <= row <= end:
-                # The overlay's own left border is outside our terminal. Use
-                # reverse video there without shifting/replacing source text.
-                content = '\x1b[7m' + ESCAPE.sub(lambda m: m.group() + '\x1b[7m', content)
-            content_x = x + self.border
-            clipped_left = max(0, -content_x)
-            at(y + index + self.border, max(0, content_x),
-               crop(content, min(width - 2 * self.border - gutter, columns - content_x), clipped_left))
-            if self.border:
-                at(y + index + 1, x + width - 1, RESET + '│')
-        footer = f' {self.cursor + 1}/{len(self.rows)}  クリック=行 ドラッグ=範囲 '
-        at(y + height - 1, x, '└' + crop(footer, width - 2) + '┘')
+        for frame in [*self.frame.get('peers', []), self.frame]:
+            active = frame is self.frame
+            rect = frame['rect']
+            x, y = rect['x'] - inset_x, rect['y'] - inset_y
+            width, height = rect['width'], rect['height']
+            if (width < 3 or height < 3 or x + 1 < 0 or y + 1 < 0
+                    or x + width - 2 - gutter >= columns or y + height - 2 >= lines):
+                raise ValueError('Pane does not fit; restore terminal size and reopen ask')
+            border = self.border if active else (0 if frame.get('scroll', {}).get('viewport_rows') == height else 1)
+            if active:
+                self.height = height - 2 * border
+            if border:
+                label = ' ' + frame.get('title', 'ask') + ' '
+                title_width = sum(cell_width(c) for c in plain(crop(label, width - 2)))
+                at(y, max(0, x), BORDER + '┌' + crop(label, width - 2) + BORDER
+                   + '─' * max(0, width - 2 - title_width) + '┐' + RESET)
+            top = self.top if active else frame.get('top', 0)
+            for index in range(height - 2 * border):
+                row = top + index
+                selected = active and start <= row <= end
+                if border:
+                    at(y + index + 1, x, BORDER + ('▌' if selected else '│') + RESET)
+                content = frame['rows'][row] if row < len(frame['rows']) else ''
+                content_x = x + border
+                clipped_left = max(0, -content_x)
+                limit = min(width - 2 * border - gutter, columns - content_x)
+                content = crop(content, limit, clipped_left)
+                if selected:
+                    # Reapply only the background after every SGR, including
+                    # resets. Source foreground colors remain untouched.
+                    content = SELECTED_BG + ESCAPE.sub(lambda m: m.group() + SELECTED_BG, content)
+                    used = sum(cell_width(c) for c in plain(content))
+                    content += ' ' * max(0, limit - clipped_left - used) + RESET
+                at(y + index + border, max(0, content_x), content)
+                if border:
+                    at(y + index + 1, x + width - 1, BORDER + '│' + RESET)
+            if border:
+                at(y + height - 1, max(0, x), BORDER + '└' + '─' * (width - 2) + '┘' + RESET)
         return ''.join(output)
 
 
@@ -213,7 +227,14 @@ def popup_rect(selection, columns, lines):
     # Keep a context row between box and selection whenever there is room.
     gap = int(space > height)
     y = end + 1 + gap if below >= above else start - gap - height
-    return (2, y, columns - 4, height)
+    x, width = 2, columns - 4
+    if selection:
+        rect = selection.frame['rect']
+        x = max(1, rect['x'] - selection.inset[0] + 1)
+        width = min(rect['width'] - 3, columns - x - 1)
+        if width < 8:
+            return None
+    return (x, y, width, height)
 
 
 def popup_render(rect, rows):

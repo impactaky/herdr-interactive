@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise a disposable Herdr session and render its real tmux captures as PNG.
 Requires Herdr 0.9.5, tmux, agent-browser, Codex and an existing Codex login.
-Sends exactly two short Redpen messages to that disposable Codex.
+Sends exactly two short ask messages to that disposable Codex.
 """
 import json
 import os
@@ -29,7 +29,7 @@ def main():
     env.update(XDG_CONFIG_HOME=str(base / 'config'), XDG_STATE_HOME=str(base / 'state'),
                HERDR_CONFIG_PATH=str(base / 'config.toml'), TERM='xterm-256color',
                COLORTERM='truecolor', AGENT_BROWSER_SESSION=base.name)
-    (base / 'config.toml').write_text('onboarding = false\n[[keys.command]]\nkey = "prefix+shift+r"\ntype = "plugin_action"\ncommand = "interactive.redpen"\n')
+    (base / 'config.toml').write_text('onboarding = false\n[[keys.command]]\nkey = "prefix+shift+r"\ntype = "plugin_action"\ncommand = "interactive.ask"\n')
     (base / 'tmux.conf').write_text('set -g default-terminal "tmux-256color"\nset -as terminal-features ",xterm-256color:RGB"\nset -g status off\n')
 
     def run(args, check=True):
@@ -67,7 +67,26 @@ def main():
         # Raw SGR mouse input goes through Herdr's real mouse dispatch.
         literal(f'\x1b[<0;38;{row}M\x1b[<32;38;{row+1}M\x1b[<0;38;{row+1}m')
 
-    log = base / 'state/herdr-interactive/redpen.jsonl'
+    def wait_output(agent, predicate):
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            text = herdr('agent', 'read', agent, '--source', 'visible')
+            state = herdr('agent', 'get', agent)['agent']['agent_status']
+            if predicate(text) and state in ('idle', 'done'):
+                return text
+            time.sleep(.5)
+        raise RuntimeError('Timed out waiting for the demo answer')
+
+    def error_pair(text):
+        rows = text.splitlines()
+        return next((i for i in range(len(rows) - 1)
+                     if rows[i].lstrip('•●-* ').rstrip() == 'error[E0308]: mismatched types'
+                     and rows[i + 1].strip() == '--> src/main.rs:12:5'), None)
+
+    def has_answer(prefix):
+        return lambda text: any(line.lstrip('•●-* ').startswith(prefix) for line in text.splitlines())
+
+    log = base / 'state/herdr-interactive/ask.jsonl'
     try:
         tmux('-f', str(base / 'tmux.conf'), 'new-session', '-d', '-x', '120', '-y', '36',
              '-s', 'shot', 'cd /tmp && herdr --session ' + base.name)
@@ -88,18 +107,18 @@ def main():
         herdr('pane', 'run', initial, "printf '\\033[2J\\033[HReady for review\\n'")
         time.sleep(.4)
         capture('before')
-        herdr('plugin', 'action', 'invoke', 'interactive.redpen')
+        herdr('plugin', 'action', 'invoke', 'interactive.ask')
         time.sleep(.6)
         capture('frozen')
         # Right pane begins at screen column 74. Two source rows: screen 4/5.
         literal('\x1b[<0;82;4M\x1b[<32;82;5M\x1b[<0;82;5m')
         capture('drag')
-        keys('Enter'); literal('ここはなぜ？')
+        keys('Enter'); literal('これどこで型が決まってる？')
         capture('no-agent')
         keys('Enter')
         assert json.loads(log.read_text().splitlines()[-1])['delivery'] == 'not_sent'
         before = log.read_bytes()
-        herdr('plugin', 'action', 'invoke', 'interactive.redpen'); time.sleep(.5)
+        herdr('plugin', 'action', 'invoke', 'interactive.ask'); time.sleep(.5)
         keys('Enter'); literal('取り消す'); keys('Escape'); time.sleep(1.2)
         assert log.read_bytes() == before
         assert next(p for p in herdr('pane', 'list')['panes'] if p['focused'])['pane_id'] == shell
@@ -107,33 +126,46 @@ def main():
         # Clear then launch installed Codex, avoiding paths in the visible screen.
         herdr('pane', 'run', initial, 'export PATH=' + shlex.quote(str(Path(codex).parent)) + ':"$PATH"; clear')
         time.sleep(.4)
-        herdr('agent', 'start', 'capture-demo', '--kind', 'codex', '--pane', initial, '--timeout', '30000')
+        seed = ('Print a small Rust build-log example: an error[E0308]: mismatched types line, '
+                'then an adjacent --> src/main.rs:12:5 line. Explain in one short line that '
+                'parse_count returns String but main expects u32. No tools.')
+        herdr('agent', 'start', 'capture-demo', '--kind', 'codex', '--pane', initial, '--timeout', '30000',
+              '--', '-c', 'model_reasoning_effort="low"', seed)
         agent = initial
         herdr('agent', 'focus', agent)
-        time.sleep(.8)
-        # Select two lines of the actual agent screen, via drag.
-        herdr('plugin', 'action', 'invoke', 'interactive.redpen'); time.sleep(.6)
-        drag(4)
-        keys('Enter'); literal('受信確認です。短く「確認」と返してください。')
+        wait_output(agent, lambda text: error_pair(text) is not None)
+        capture('agent-before')
+        # Select the two adjacent build-error lines in the actual agent output.
+        visible = herdr('pane', 'read', agent, '--source', 'visible')
+        error_row = error_pair(visible)
+        assert error_row is not None
+        herdr('plugin', 'action', 'invoke', 'interactive.ask'); time.sleep(.6)
+        drag(error_row + 3)
+        keys('Enter'); literal('これどこで型が決まってる？「型は」で始めて2文で答えて。')
         capture('popup')
         keys('Enter')
-        herdr('agent', 'wait', agent, '--timeout', '30000')
+        wait_output(agent, has_answer('型は'))
         records = [json.loads(line) for line in log.read_text().splitlines()]
         assert records[-1]['delivery'] == 'sent' and records[-1]['source']['pane_id'] == agent
         received = herdr('agent', 'read', agent, '--source', 'visible')
         assert '【赤】' in received and '以下の引用は送り元の画面の文字です' in received
         (base / 'agent-read.txt').write_text(received)
+        assert error_pair(records[-1]['quote']) == 0
+        herdr('pane', 'zoom', agent, '--on')
+        time.sleep(.5)
         capture('delivered')
+        herdr('pane', 'zoom', agent, '--off')
+        time.sleep(.5)
         # Switch to the right shell with actual TUI focus keys.
         keys('C-b', 'l')
         focused = next(p for p in herdr('pane', 'list')['panes'] if p['focused'])['pane_id']
         assert focused == shell, focused
-        herdr('plugin', 'action', 'invoke', 'interactive.redpen'); time.sleep(.6)
+        herdr('plugin', 'action', 'invoke', 'interactive.ask'); time.sleep(.6)
         literal('\x1b[<0;82;4M\x1b[<32;82;5M\x1b[<0;82;5m')
-        keys('Enter'); literal('このエラーも確認してください。返事は「確認」だけで。')
+        keys('Enter'); literal('この build log も確認して。「原因:」で始めて1文で答えて。')
         capture('shell-popup')
         keys('Enter')
-        herdr('agent', 'wait', agent, '--timeout', '30000')
+        wait_output(agent, has_answer('原因:'))
         records = [json.loads(line) for line in log.read_text().splitlines()]
         assert records[-1]['delivery'] == 'sent' and records[-1]['source']['pane_id'] == shell
         herdr('agent', 'focus', agent)
@@ -141,6 +173,8 @@ def main():
         assert f'送り元: pane={shell} cwd=/tmp' in received
         assert '> error[E0308]: mismatched types' in received
         (base / 'shell-agent-read.txt').write_text(received)
+        herdr('pane', 'zoom', agent, '--on')
+        time.sleep(.5)
         capture('shell-to-agent')
         assert log.stat().st_mode & 0o777 == 0o600
         print('PASS: link, drag, popup, sent x2, no-agent, Esc/focus, private log')

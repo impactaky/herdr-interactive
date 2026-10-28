@@ -63,7 +63,7 @@ def convert(text):
             width = 0 if unicodedata.combining(char) else 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
             front, back = (bg, fg) if reverse else (fg, bg)
             output.append(f'<span style="width:{width}ch;color:{front};background:{back};font-weight:{700 if bold else 400}">{html.escape(char)}</span>')
-    return '''<!doctype html><meta charset="utf-8"><title>Redpen capture</title>
+    return '''<!doctype html><meta charset="utf-8"><title>ask capture</title>
 <style>body{margin:0;background:#282c34;color:#d8dee9}pre{margin:0;padding:12px;font:16px/22px "Noto Sans Mono CJK JP",monospace;white-space:pre}span{display:inline-block;text-align:left;height:22px;vertical-align:top}</style><pre>''' + ''.join(output) + '</pre>'
 
 

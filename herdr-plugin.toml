@@ -1,5 +1,5 @@
 id = "interactive"
-name = "Redpen"
+name = "ask"
 version = "0.1.0"
 min_herdr_version = "0.9.5"
 description = "Send an annotated selection from any pane to an agent."
@@ -7,12 +7,12 @@ platforms = ["linux"]
 
 [[panes]]
 id = "compose"
-title = "Redpen · Enter 次へ / V 範囲 / j,k ↑↓ / PgUp,Dn / Esc"
+title = "ask · Enter 次へ / V 範囲 / j,k ↑↓ / PgUp,Dn / Esc"
 placement = "overlay"
 command = ["bash", "-c", 'exec bash "${HERDR_PLUGIN_ROOT:?}/run.sh" compose']
 
 [[actions]]
-id = "redpen"
+id = "ask"
 title = "赤を入れる"
 contexts = ["pane", "selection"]
 command = ["bash", "run.sh", "open"]

@@ -17,7 +17,7 @@ from frozen import ansi_rows, plain, choose, popup_rect, popup_render
 LIMIT = 4000
 
 
-class RedpenError(Exception):
+class AskError(Exception):
     pass
 
 
@@ -26,7 +26,7 @@ class Host:
         self.env = env
         self.path = env.get('HERDR_SOCKET_PATH', '')
         if env.get('HERDR_ENV') != '1' or not os.path.isabs(self.path):
-            raise RedpenError('Inherited absolute Herdr socket required')
+            raise AskError('Inherited absolute Herdr socket required')
 
     def call(self, method, **params):
         # Use the bundled socket schema so ANSI snapshots and geometry share
@@ -35,14 +35,14 @@ class Host:
             with socket.socket(socket.AF_UNIX) as client:
                 client.settimeout(10)
                 client.connect(self.path)
-                client.sendall((json.dumps(dict(id='redpen', method=method, params=params)) + '\n').encode())
+                client.sendall((json.dumps(dict(id='ask', method=method, params=params)) + '\n').encode())
                 with client.makefile('rb') as stream:
                     response = json.loads(stream.readline())
             if 'error' in response:
-                raise RedpenError(str(response['error']))
+                raise AskError(str(response['error']))
             return response['result']
         except (OSError, ValueError, KeyError) as error:
-            raise RedpenError(f'Herdr request failed ({method}): {error}') from error
+            raise AskError(f'Herdr request failed ({method}): {error}') from error
 
 
 def title(pane):
@@ -62,7 +62,7 @@ def candidates(agents, source):
 def snapshot(host, context):
     pane_id = context.get('focused_pane_id') or host.env.get('HERDR_PANE_ID')
     if not pane_id:
-        raise RedpenError('Source pane unavailable')
+        raise AskError('Source pane unavailable')
     pane = host.call('pane.get', pane_id=pane_id)['pane']
     red = dict(source=dict(pane_id=pane_id, title=title(pane),
                            cwd=pane.get('foreground_cwd') or pane.get('cwd') or context.get('focused_pane_cwd'),
@@ -85,7 +85,17 @@ def snapshot(host, context):
         # visible is authoritative if output changed between the two reads.
         top = max(0, len(history) - offset - len(visible))
         rows = history[:top] + visible + history[top + len(visible):]
-    red['frame'] = dict(rows=rows, top=top, rect=rect, area=layout['area'], scroll=scroll)
+    peers = []
+    for item in layout['panes']:
+        if item['pane_id'] == pane_id:
+            continue
+        other = host.call('pane.get', pane_id=item['pane_id'])['pane']
+        peer_rows = ansi_rows(host.call('pane.read', pane_id=item['pane_id'], source='visible',
+                                        format='ansi', strip_ansi=False)['read']['text'])
+        peers.append(dict(rows=peer_rows, rect=item['rect'], top=0,
+                          title=other.get('label') or title(other), scroll=other.get('scroll', {})))
+    red['frame'] = dict(rows=rows, top=top, rect=rect, area=layout['area'], scroll=scroll,
+                        title=pane.get('label') or title(pane), peers=peers)
     return red
 
 
@@ -114,15 +124,15 @@ class Store:
     def __init__(self, env):
         base = Path(env.get('XDG_STATE_HOME') or Path(env['HOME']) / '.local/state')
         if not base.is_absolute():
-            raise RedpenError('XDG_STATE_HOME must be absolute')
+            raise AskError('XDG_STATE_HOME must be absolute')
         self.root = base / 'herdr-interactive'
-        self.path = self.root / 'redpen.jsonl'
+        self.path = self.root / 'ask.jsonl'
 
     def prepare(self):
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         info = self.root.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-            raise RedpenError('Redpen state directory must be private (0700) and owned by you')
+            raise AskError('ask state directory must be private (0700) and owned by you')
 
     def open(self):
         self.prepare()
@@ -131,7 +141,7 @@ class Store:
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                 or info.st_mode & 0o077 or info.st_nlink != 1):
             os.close(fd)
-            raise RedpenError('Redpen log must be a private regular file (0600)')
+            raise AskError('ask log must be a private regular file (0600)')
         return os.fdopen(fd, 'a', encoding='utf-8')
 
 
@@ -149,10 +159,10 @@ def submit(host, store, red, target, note):
                 live = host.call('agent.get', target=target['pane_id'])['agent']
                 if (live.get('agent') != target['agent'] or live.get('agent_session') != target.get('agent_session')
                         or live.get('tab_id') != red['source']['tab_id']):
-                    raise RedpenError('Destination agent changed; reopen Redpen')
+                    raise AskError('Destination agent changed; reopen ask')
                 host.call('agent.prompt', target=target['pane_id'], text=message(red, target, note))
                 record['delivery'] = 'sent'
-            except RedpenError as failure:
+            except AskError as failure:
                 record['delivery'] = 'failed_or_unknown'
                 record['error'] = str(failure)
                 error = failure
@@ -176,7 +186,7 @@ def open_overlay(host):
         with os.fdopen(fd, 'w', encoding='utf-8') as output:
             json.dump(red, output, ensure_ascii=False)
         host.call('plugin.pane.open', plugin_id='interactive', entrypoint='compose', placement='overlay',
-                  focus=True, env={'HERDR_REDPEN_SNAPSHOT_FILE': name})
+                  focus=True, env={'HERDR_ASK_SNAPSHOT_FILE': name})
     except BaseException:
         Path(name).unlink(missing_ok=True)
         raise
@@ -199,10 +209,10 @@ def compose(host, store, screen, red, selection=None):
         background = selection.render(width, height) if selection else '\x1b[0m\x1b[2J'
         rect = popup_rect(selection, width, height)
         if rect is None:
-            raise RedpenError('入力欄の場所がありません。画面を戻して選び直してください')
+            raise AskError('入力欄の場所がありません。画面を戻して選び直してください')
         destination = target['pane_id'] + ' ' + title(target) if target else 'なし — 記録だけ残します'
         rows = [notice or '【赤】→ ' + destination,
-                'Enter 送信 / Ctrl+J 改行 / Tab 送り先 / Esc 取消']
+                'Enter送信 Tab宛先 ^J改行 Esc取消']
         rows += note.split('\n')
         # curses handles UTF-8 input; ANSI output keeps the original SGR colors.
         screen.refresh()
@@ -221,7 +231,7 @@ def compose(host, store, screen, red, selection=None):
                 continue
             try:
                 submit(host, store, red, target, note)
-            except (RedpenError, OSError) as error:
+            except (AskError, OSError) as error:
                 notice = str(error) + ' — 送信結果を確認し Esc で閉じる'
                 failed = True
                 continue
@@ -239,7 +249,7 @@ def main():
     if sys.argv[1:] == ['open']:
         open_overlay(host)
     elif sys.argv[1:] == ['compose']:
-        path = Path(host.env['HERDR_REDPEN_SNAPSHOT_FILE'])
+        path = Path(host.env['HERDR_ASK_SNAPSHOT_FILE'])
         try:
             red = json.loads(path.read_text())
         finally:
@@ -252,12 +262,12 @@ def main():
             set_quote(red, selection.quote(), 'frozen')
         curses.wrapper(lambda screen: compose(host, Store(host.env), screen, red, selection))
     else:
-        raise RedpenError('Usage: run.sh open|compose')
+        raise AskError('Usage: run.sh open|compose')
 
 
 if __name__ == '__main__':
     try:
         main()
-    except (RedpenError, OSError, ValueError, KeyError) as error:
-        print(f'Redpen: {error}', file=sys.stderr)
+    except (AskError, OSError, ValueError, KeyError) as error:
+        print(f'ask: {error}', file=sys.stderr)
         sys.exit(1)
